@@ -1,0 +1,9 @@
+{
+  // zap: a terminal editor in Aela (aec build)
+  "name": "zap",
+  "version": "0.1.0",
+  "description": "an nvim-like terminal editor on std/tui, configured in s-expressions",
+  "entry": "src/main.ae",
+  "output": "build/zap",
+  "include": [ "src/**/*.ae" ],
+}
