@@ -1,0 +1,93 @@
+//! zap's text storage (memline): a buffer's lines in chunks of ~8 KB of
+//! whole lines, at most `resident` of them in memory at once.
+//!
+//! * Opening a file reads it once, block by block, to find each chunk's
+//!   start and line count; no text is kept.
+//! * A chunk is loaded (`fs::read_at`) on first access; the least recently
+//!   used one is evicted when too many are loaded.
+//! * A changed chunk is the only copy of its lines: on eviction it is
+//!   appended to a swap file (`~/.local/state/zap/swap/`) and reloaded from
+//!   there. A chunk past 512 lines is split.
+//! * Writing goes to a new file first, chunk by chunk, then over the old one
+//!   in place (same file: mode, owner and links kept); after that every chunk
+//!   comes from it. A file changed on disk since it was read is not
+//!   overwritten unless forced.
+//! * If a chunk fails to reload (file changed or gone), the memline is marked
+//!   `broken` and refuses to write: it never saves lost lines.
+
+import fs from "std/fs";
+import str from "std/string";
+import time from "std/time";
+import process from "std/process";
+import state from "state.ae";
+
+let CHUNK_BYTES: i64 = 8192;
+let SPLIT_LINES: i64 = 512;
+let SCAN_BLOCK: i64 = 65536;
+
+/// where a chunk's text lives when not in memory
+export enum Where { File, Swap, Memory }
+
+// a run of lines: where its text is (bytes off..off+size of the file or
+// swap file), its line count, and its lines while in memory
+struct Chunk {
+    place: Where;
+    off: i64 = 0;
+    size: i64 = 0;
+    count: i64;
+    lines: string[] = [];
+    loaded: bool = false;
+    dirty: bool = false;  // in memory and changed: the lines are the only copy
+    used: i64 = 0;        // last use time (for eviction)
+}
+
+/// a buffer's lines
+export struct MemLine {
+    export file: string = "";    // where File chunks are read from ("": none)
+    export count: i64 = 0;       // lines
+    export crlf: bool = false;   // file lines end in \r\n
+    export eol: bool = true;     // last line ends in a newline
+    export resident: i64 = 32;   // max chunks in memory
+    export broken: string = "";  // why a chunk failed to load ("": none)
+    export swapped: i64 = 0;     // chunks written to the swap file so far
+    swap: string = "";
+    swap_size: i64 = 0;
+    chunks: Chunk[] = [];
+    loaded: i64[] = [];  // chunks in memory
+    clock: i64 = 0;
+    hint: i64 = 0;       // last chunk found, and its first line
+    hint_start: i64 = 0;
+    export stamp: i64 = 0;  // file size and time when read (or written)
+    export stamp_time: Duration = 0ms;
+}
+
+/// one empty line, in memory
+export fn empty() -> MemLine {
+    var m: MemLine = MemLine {};
+
+    m.chunks.push(Chunk { place: Where::Memory, count: 1, lines: [""], loaded: true, dirty: true }
+    );
+    m.loaded.push(0);
+    m.count = 1;
+    return m;
+}
+
+/// lines in memory (a scratch buffer, e.g. a command's output)
+export fn of_text(text: string) -> MemLine {
+    var m: MemLine = MemLine {};
+    var lines: string[] = str::split(text, "\n");
+
+    if (lines.len > 1 && lines[lines.len - 1].len == 0) { lines.pop(); }
+    var part: string[] = [];
+
+    for (let l: string in lines) {
+        part.push(l);
+        if (part.len >= SPLIT_LINES / 2) {
+            m.add_memory(part);
+            part = [];
+        }
+    }
+    // (split gives at least one line, so at least one chunk)
+    if (part.len > 0) { m.add_memory(part); }
+    return m;
+}
