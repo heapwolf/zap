@@ -1,0 +1,50 @@
+//! zap: a terminal editor in Aela, on std/tui. nvim-like: modes, a command
+//! line, search, a file tree in a mouse-resizable split, buffers, themes,
+//! and add-ins (s-expressions in ~/.config/zap/init.zap) that run the Aela
+//! compiler's tools. Files are kept in chunks (the memline); only on-screen
+//! lines are read and highlighted.
+//!
+//!   aec main.ae -o zap && ./zap [file...] [+line]
+
+import tui from "std/tui";
+import term from "std/term";
+import path from "std/path";
+import fs from "std/fs";
+import str from "std/string";
+import time from "std/time";
+import cfgm from "config.ae";
+import editor from "editor.ae";
+import { App, Mode } from "editor.ae";
+import view from "view.ae";
+import process from "std/process";
+
+// routes terminal events to the editor (the picker and mouse via std/tui)
+fn on_event(mut ui: &tui::Ui(App), mut app: &App, e: tui::Event) -> void {
+    let picking: bool = app.picking.len > 0;
+
+    match (e) {
+        tui::Event::Key { key } => {
+            if (picking) {
+                tui::handle(ui, app, &tui::Event::Key { key: std::copy(key) });
+            } else {
+                app.key(&key);
+            }
+        },
+        tui::Event::Paste { text } => {
+            if (picking) {
+                tui::handle(ui, app, &tui::Event::Paste { text: text });
+            } else {
+                app.paste(text);
+            }
+        },
+        tui::Event::Mouse { kind, button, x, y, ctrl, alt, shift } => {
+            let wheel: bool = kind == term_up() || kind == term_down();
+            let sideways: bool = kind == term::MouseKind::ScrollLeft ||
+                kind == term::MouseKind::ScrollRight || (wheel && shift);
+
+            if (sideways && !picking) {
+                // (sideways wheel, or Shift+wheel: Shift+up is left)
+                var dir: i64 = 2;
+
+                if (kind == term::MouseKind::ScrollLeft || kind == term_up()) { dir = -2; }
+                let d: i64 = app.wheel_amount(dir, 4, time::since_epoch() / 1ms);
