@@ -91,3 +91,56 @@ export fn of_text(text: string) -> MemLine {
     if (part.len > 0) { m.add_memory(part); }
     return m;
 }
+
+/// the file at p, indexed only (no text kept): its chunks and lines
+export fn open(p: string) -> MemLine | fs::NotFound | fs::PermissionDenied | fs::IsADirectory |
+    fs::IoError {
+    var m: MemLine = MemLine { file: p };
+    let info: fs::Info = match (fs::info(p)) {
+        i => i,
+        e: fs::NotFound => { fail e; },
+        e2: fs::PermissionDenied => { fail e2; },
+        e3: fs::IoError => { fail e3; }
+    };
+
+    if (info.kind == fs::Kind::Dir) { fail fs::IsADirectory { path: p }; }
+    m.stamp = info.size;
+    m.stamp_time = info.modified;
+    var at: i64 = 0;
+    var start: i64 = 0;  // start of the chunk being found
+    var lines: i64 = 0;  // its lines so far
+    var last: u8 = 10;
+    var first_line: bool = true;
+
+    while (true) {
+        let block: string = fs::read_at(p, at, SCAN_BLOCK)?;
+        let n: i64 = block.len;
+
+        if (n == 0) { break; }
+
+        for (let i: i64 in 0..n) {
+            if (block[i] == 10) {
+                if (first_line) {
+                    m.crlf = i > 0 && block[i - 1] == 13;
+                    first_line = false;
+                }
+                lines += 1;
+                let end: i64 = at + i + 1;
+
+                if (end - start >= CHUNK_BYTES) {
+                    m.chunks.push(Chunk {
+                        place: Where::File, off: start, size: end - start, count: lines
+                    });
+                    m.count += lines;
+                    start = end;
+                    lines = 0;
+                }
+            }
+        }
+        last = block[n - 1];
+        at += n;
+    }
+    m.eol = last == 10;
+    if (at > start) {
+        // the rest: whole lines, plus the last one if it has no newline
+        var count: i64 = lines;
