@@ -144,3 +144,46 @@ export fn open(p: string) -> MemLine | fs::NotFound | fs::PermissionDenied | fs:
     if (at > start) {
         // the rest: whole lines, plus the last one if it has no newline
         var count: i64 = lines;
+
+        if (!m.eol) { count += 1; }
+        m.chunks.push(Chunk { place: Where::File, off: start, size: at - start, count: count });
+        m.count += count;
+    }
+    if (m.chunks.len == 0) {
+        m.chunks.push(Chunk {
+            place: Where::Memory, count: 1, lines: [""], loaded: true, dirty: true
+        });
+        m.loaded.push(0);
+        m.count = 1;
+    }
+    return m;
+}
+
+// swap file path for a buffer of file p (dir made on first use)
+fn swap_path(p: string) -> string {
+    let dir: string = state::dir("swap");
+
+    state::ensure_dir(dir);
+    var name: string = state::flat(p);
+
+    if (name.len == 0) { name = "noname"; }
+    return "\(dir)/\(name).\(time::now().elapsed() / 1ns).swp";
+}
+
+/// the file changed on disk since it was read (:w! writes anyway)
+export failure ChangedOnDisk { path: string; }
+
+// where p's new text goes when p's directory cannot take a file
+fn stage_path(p: string) -> string {
+    let dir: string = state::dir("new");
+
+    state::ensure_dir(dir);
+    return "\(dir)/\(state::flat(p))";
+}
+
+fn remove_quietly(p: string) -> void {
+    match (fs::remove(p)) {
+        v => {}, e: fs::NotFound => {}, e2: fs::PermissionDenied => {}, e3: fs::NotEmpty => {},
+        e4: fs::IoError => {}
+    }
+}
