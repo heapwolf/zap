@@ -187,3 +187,134 @@ fn remove_quietly(p: string) -> void {
         e4: fs::IoError => {}
     }
 }
+
+// copy size bytes of src over dst (truncate, then append block by block:
+// dst stays the same file) -> did it all go?
+fn copy_over(src: string, dst: string, size: i64) -> bool {
+    match (fs::write_text(dst, "", fs::Write {})) {
+        v => {},
+        e: fs::NotFound => { return false; }, e2: fs::PermissionDenied => { return false; },
+        e3: fs::IsADirectory => { return false; }, e4: fs::IoError => { return false; }
+    }
+    var at: i64 = 0;
+
+    while (at < size) {
+        let block: string = match (fs::read_at(src, at, 1048576)) {
+            t => t,
+            e: fs::NotFound => { return false; }, e2: fs::PermissionDenied => { return false; },
+            e3: fs::IsADirectory => { return false; }, e4: fs::IoError => { return false; }
+        };
+
+        if (block.len == 0) {
+            return false;
+        }
+        match (fs::write_text(dst, block, fs::Write { append: true })) {
+            v => {},
+            e: fs::NotFound => { return false; }, e2: fs::PermissionDenied => { return false; },
+            e3: fs::IsADirectory => { return false; }, e4: fs::IoError => { return false; }
+        }
+        at += block.len;
+    }
+    return true;
+}
+
+// text split into lines (no trailing empty line; \r stripped if crlf)
+fn split_lines(text: string, crlf: bool) -> string[] {
+    var lines: string[] = str::split(text, "\n");
+
+    if (lines.len > 0 && lines[lines.len - 1].len == 0) { lines.pop(); }
+    if (crlf) {
+        for (let i: i64 in 0..lines.len) {
+            let l: string = lines[i];
+
+            if (l.len > 0 && l[l.len - 1] == 13) { lines[i] = str::substr(l, 0, l.len - 1); }
+        }
+    }
+    return lines;
+}
+
+impl MemLine {
+    // append a chunk of in-memory lines
+    fn add_memory(mut self: &MemLine, lines: string[]) -> void {
+        let n: i64 = lines.len;
+
+        self.chunks.push(Chunk {
+            place: Where::Memory, count: n, lines: lines, loaded: true, dirty: true
+        });
+        self.loaded.push(self.chunks.len - 1);
+        self.count += n;
+    }
+
+    /// chunks in total, and in memory now
+    export fn chunk_count(self: &MemLine) -> i64 { return self.chunks.len; }
+
+    export fn loaded_count(self: &MemLine) -> i64 { return self.loaded.len; }
+
+    /// the chunk holding line i (0 <= i <= count; count: last chunk); its
+    /// first line goes in hint_start
+    fn locate(mut self: &MemLine, i: i64) -> i64 {
+        let n: i64 = self.chunks.len;
+        var k: i64 = self.hint;
+        var s: i64 = self.hint_start;
+
+        if (k >= n || k < 0) {
+            k = 0;
+            s = 0;
+        }
+
+        while (i < s && k > 0) {
+            k -= 1;
+            s -= self.chunks[k].count;
+        }
+
+        while (k < n - 1 && i >= s + self.chunks[k].count) {
+            s += self.chunks[k].count;
+            k += 1;
+        }
+        self.hint = k;
+        self.hint_start = s;
+        return k;
+    }
+
+    // load chunk k if needed and mark it most recently used
+    fn load(mut self: &MemLine, k: i64) -> void {
+        self.clock += 1;
+        self.chunks[k].used = self.clock;
+        if (self.chunks[k].loaded) {
+            return;
+        }
+        let want: i64 = self.chunks[k].count;
+        var src: string = self.file;
+        var crlf: bool = self.crlf;
+
+        if (self.chunks[k].place == Where::Swap) {
+            src = self.swap;
+            crlf = false;
+        }
+        var lines: string[] = [];
+
+        match (fs::read_at(src, self.chunks[k].off, self.chunks[k].size)) {
+            text => {
+                if (text.len != self.chunks[k].size) {
+                    self.broken = "\(src) is shorter than when it was read";
+                }
+                lines = split_lines(text, crlf);
+            },
+            e: fs::NotFound => { self.broken = "\(src) is gone"; },
+            e2: fs::PermissionDenied => { self.broken = "\(src) cannot be read"; },
+            e3: fs::IsADirectory => { self.broken = "\(src) is a directory now"; },
+            e4: fs::IoError => { self.broken = "\(src) could not be read"; }
+        }
+        if (self.chunks[k].place == Where::File && self.broken.len == 0) {
+            if (self.changed_on_disk()) { self.broken = "\(src) changed on disk"; }
+        }
+
+        // (a short chunk keeps its line count: blank lines, and broken says why)
+        while (lines.len < want) { lines.push(""); }
+
+        while (lines.len > want) { lines.pop(); }
+        self.chunks[k].lines = lines;
+        self.chunks[k].loaded = true;
+        self.loaded.push(k);
+        self.trim(k);
+    }
