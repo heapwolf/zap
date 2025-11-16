@@ -1,0 +1,217 @@
+//! zap's editor: its state (buffers, tree, modes, command line, running
+//! command) and what keys and commands do to it. Screen: view.ae; loop:
+//! main.ae.
+//!
+//! Modes, as in vi: Normal (commands, counts, operators, motions), Insert,
+//! Command (`:`), Search (`/`, `?`). The tree takes the keys when focused
+//! (`<Tab>`, `<C-w>h`, `<leader>e`). Configured bindings are tried first; a
+//! key that only starts a binding waits for the next.
+
+import str from "std/string";
+import fs from "std/fs";
+import path from "std/path";
+import process from "std/process";
+import time from "std/time";
+import enc from "std/encoding";
+import tui from "std/tui";
+import { Model } from "std/tui";
+import {
+    Config,
+    Command,
+    Keymap,
+    FileType,
+    OPTIONS,
+    DEFAULTS,
+    token,
+    config_path
+} from "config.ae";
+import cfgm from "config.ae";
+import { Look, Theme, look } from "themes/theme.ae";
+import { Tree, Entry, tree } from "tree.ae";
+import bufm from "buffer.ae";
+import {
+    Buf,
+    Diag,
+    Matcher,
+    matcher,
+    next_char,
+    prev_char,
+    col_of,
+    byte_at,
+    cell_width,
+    wordy
+} from "buffer.ae";
+import { ChangedOnDisk, MemLine } from "memline.ae";
+import { History, Change } from "undo.ae";
+import symbols from "symbols.ae";
+import { Index, Decl, Kind } from "symbols.ae";
+import { Hl } from "syntax.ae";
+import syntax from "syntax.ae";
+import sheetm from "sheet.ae";
+import { Sheet, SheetVis } from "sheet.ae";
+import mermaid from "mermaid.ae";
+import { Canvas } from "mermaid.ae";
+import state from "state.ae";
+import git from "git.ae";
+
+/// what the keys do
+export enum Mode { Normal, Insert, Command, Search, Visual }
+
+/// an editor window line, ready to paint: number (0: past the end), text,
+/// highlights, search matches, whether a tool flagged it, whether the cursor is on it
+export struct VisLine {
+    export no: i64;
+    export text: string = "";
+    export hls: Hl[] = [];
+    export matches: i64[] = [];
+    export diag: bool = false;
+    export current: bool = false;
+    export sel_lo: i64 = -1;        // selection's screen columns (-1: none; hi exclusive)
+    export sel_hi: i64 = 0;
+    export sign: i64 = 0;           // git sign (git.ae)
+}
+
+// a pending git request for a buffer's committed text; the answer goes to out
+struct GitAsk {
+    id: i64;
+    out: string;
+    child: process::Child[] = [];
+}
+
+/// a completion: word, kind (Text: a buffer's word), and its declaration in
+/// the index (-1: none)
+export struct CompItem {
+    export word: string;
+    export kind: Kind;
+    export exported: bool = false;
+    export owner: string = "";
+    export decl: i64 = -1;
+}
+
+/// a tree window row, ready to paint
+export struct VisRow {
+    export name: string;
+    export depth: i64;
+    export kind: i64;               // 0 root, 1 directory, 2 file
+    export special: bool;
+    export open: bool;              // the current buffer's file
+    export selected: bool;
+    export matches: i64[];
+}
+
+/// a location a tool printed: file, line, column (1-based), message
+export struct Loc {
+    export file: string;
+    export line: i64;
+    export col: i64;
+    export message: string;
+}
+
+/// a mermaid diagram drawn in place of the text: source, zoom, window position
+export struct Viewer {
+    export line: i64;               // a line of its source (Markdown block's; .mmd file: 0)
+    export id: i64;                 // buffer id
+    export zoom: i64 = 0;
+    export px: i64 = 0;                 // window's top left on the canvas
+    export py: i64 = 0;
+    export canvas: Canvas = Canvas {};
+    export src: string = "";             // source it was drawn from, at zoom drawn,
+    src_gen: i64 = -1;                  // read from the buffer at this gen
+    export drawn: i64 = -100;
+    export centered: bool;          // center once drawn
+    export press_x: i64 = 0;            // a drag: start, and window position then
+    export press_y: i64 = 0;
+    export press_px: i64 = 0;
+    export press_py: i64 = 0;
+}
+
+/// diagram window, ready to paint: bar, and each row's runs of text by kind
+export struct DiagramVis {
+    export bar: string = "";
+    export texts: string[][] = [];
+    export kinds: i64[][] = [];
+}
+
+/// zap's version (from index.json)
+export let VERSION: string = "0.1.0";
+
+let MODE_NAMES: string[] = ["NORMAL", "INSERT", "COMMAND", "SEARCH", "VISUAL"];
+
+/// palette categories, in Tab order
+export let CATEGORIES: string[] = ["Files", "Grep", "Symbols", "Buffers", "Commands", "Themes"];
+
+/// ex commands by long name (what Tab completes; ex() also takes short
+/// names); keep in sync with ex()'s match
+export let EX_NAMES: string[] = [
+    "write", "wall", "wq", "wqa", "xit", "quit", "qall", "edit", "enew", "buffers", "buffer",
+    "bnext", "bprevious", "bdelete", "set", "nohlsearch", "substitute", "earlier", "later",
+    "undolist", "theme", "themes", "sheet", "mermaid", "tree", "focus", "reload", "trust",
+    "defaults", "config", "cnext", "cprevious", "clist", "find", "palette", "grep", "commands",
+    "cd", "pwd", "help", "messages", "addins", "stop"
+];
+
+// history entries kept on disk, per history
+let HISTORY_MAX: i64 = 5000;
+
+/// command-line history file
+export fn history_path() -> string {
+    return state::dir("history");
+}
+
+// max project search results
+let GREP_MAX: i64 = 2000;
+
+// message and error display time (ms)
+let MSG_MS: i64 = 3000;
+let ERROR_MS: i64 = 5000;
+
+// max speed-up of held h and l, in multiples (keyaccel)
+let KEY_ACCEL_MAX: i64 = 3;
+
+// max matches the palette shows (filtering narrows them)
+let SHOWN_MAX: i64 = 500;
+
+// max files the palette lists, and max depth
+let WALK_MAX: i64 = 20000;
+let WALK_DEPTH: i64 = 24;
+
+/// new editor in directory cwd, configured by cfg
+export fn app(cfg: Config, cwd: string) -> App {
+    let lk: Look = look(&cfg.themes, cfg.theme);
+    let tw: i64 = cfg.tree_width;
+    let hidden: bool = cfg.tree_hidden;
+    let shown: bool = cfg.tree;
+    var a: App = App {
+        cfg: cfg, look: lk, cwd: cwd, tree: tree(cwd, hidden), split: tui::split("tree", tw),
+        cmd: tui::input("cmd"), picker: tui::picker("pick")
+    };
+
+    a.matcher = matcher("", false, true, true);
+    a.b = bufm::scratch(1, "", "");
+    a.b.scratch = false;
+    a.next_id = 2;
+    if (!shown) { a.split.at = 0; }
+
+    for (let e: string in &a.cfg.errors) { a.panel.push(e); }
+    if (a.panel.len > 0) { a.panel_title = "configuration errors"; }
+
+    return a;
+}
+
+impl App as Model {
+    fn update(mut self: &App, a: &tui::Action) -> void {
+        self.split.update(a);
+        self.picker.update(a);
+        if (self.picking.len > 0 && self.cat == 1 &&
+            !str::eq(self.picker.text(), self.grep_query)) {
+            self.start_grep();
+        }
+        if (a.kind == tui::Kind::Resize) {
+            self.cols = a.x;
+            self.rows = a.y;
+        }
+        if (a.kind == tui::Kind::End) { self.quit = true; }
+    }
+
+    fn done(self: &App) -> bool { return self.quit; }
+}
