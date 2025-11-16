@@ -1,0 +1,108 @@
+//! zap's buffers: a memline (the lines), the cursor and view, the undo
+//! history, the highlighter's saved states, and a tool's diagnostics for
+//! the file.
+//!
+//! Every change goes through set_line, insert_line and remove_line, which
+//! record it for undo. A change is one command's edits (one insert session,
+//! one `dd`), undone together. The history is a tree keeping every state
+//! (undo.ae), saved with the file when it is written.
+
+import str from "std/string";
+import fs from "std/fs";
+import time from "std/time";
+import regex from "std/regex";
+import unicode from "std/unicode";
+import ml from "memline.ae";
+import { MemLine } from "memline.ae";
+import syntax from "syntax.ae";
+import { Hl } from "syntax.ae";
+import { FileType } from "config.ae";
+import undo from "undo.ae";
+import { Sheet } from "sheet.ae";
+import { History, Change, Op } from "undo.ae";
+
+/// how often the highlighter's state is saved (every STEP lines)
+export let STEP: i64 = 64;
+
+/// a place a tool reported: line and column (0-based) and the message
+export struct Diag {
+    export line: i64;
+    export col: i64;
+    export message: string;
+}
+
+/// an open file (or a scratch buffer, e.g. a command's output)
+export struct Buf {
+    export id: i64;
+    export name: string;                // as shown
+    export path: string = "";           // its file ("": none yet)
+    export text: MemLine;
+    export modified: bool = false;
+    export scratch: bool = false;
+    export readonly: bool = false;      // changes refused (help)
+    export refused: bool = false;       // one was, since the editor last checked
+    export ft: FileType;
+    export tabstop: i64 = 4;
+    export git_tracked: bool = false;   // file is in a git commit (git_base: its lines)
+    export git_base: i64[] = [];        // committed lines' hashes (git.ae)
+    export signs: i64[] = [];           // each line's git sign (git.ae: NONE, ADD, ...)
+    export signs_gen: i64 = -1;         // gen when signs were found
+    export signs_ms: i64 = 0;           // and when (ms)
+    export git_asked: i64 = 0;          // when git was last asked (ms)
+    export cy: i64 = 0;                 // cursor: line, and byte in it
+    export cx: i64 = 0;
+    export want: i64 = 0;               // screen column kept by up/down
+    export top: i64 = 0;                // first line on screen
+    export left: i64 = 0;               // first column on screen
+    export diags: Diag[] = [];
+    export hist: History = History {};
+    export gen: i64 = 0;                // times its text changed (for data derived from it)
+    export sheet: Sheet[] = [];         // its sheet, if shown as a spreadsheet (CSV; none: text)
+    cur: Change = Change {};
+    changing: bool = false;
+    states: i64[] = []; // highlighter state at every STEP-th line
+    valid: i64 = 0;     // how many of them are current
+}
+
+/// a buffer of file p (empty if the file does not exist yet)
+export fn open(id: i64, p: string, name: string, ft: FileType) -> Buf | fs::PermissionDenied |
+    fs::IsADirectory | fs::IoError {
+    var text: MemLine = ml::empty();
+
+    match (ml::open(p)) {
+        m => { text = m; },
+        e: fs::NotFound => {},
+        e2: fs::PermissionDenied => { fail e2; },
+        e3: fs::IsADirectory => { fail e3; },
+        e4: fs::IoError => { fail e4; }
+    }
+    let ts: i64 = ft.tabstop;
+    var b: Buf = Buf { id: id, name: name, path: p, text: text, ft: ft, states: [0], valid: 1 };
+
+    if (ts > 0) { b.tabstop = ts; }
+    return b;
+}
+
+/// a scratch buffer holding text
+export fn scratch(id: i64, name: string, text: string) -> Buf {
+    return Buf {
+        id: id, name: name, text: ml::of_text(text), scratch: true,
+        ft: FileType { name: "text" }, states: [0], valid: 1
+    };
+}
+
+// is byte b a UTF-8 continuation byte (not a sequence's first)?
+fn cont(b: u8) -> bool { return (b & 0xC0) == 0x80; }
+
+/// the byte after the character at i in s
+export fn next_char(s: &string, i: i64) -> i64 {
+    let n: i64 = s.len;
+
+    if (i >= n) {
+        return n;
+    }
+    var j: i64 = i + 1;
+
+    while (j < n && cont(s[j])) { j += 1; }
+    return j;
+}
