@@ -1,0 +1,54 @@
+impl EditPane(A) as Node(A) {
+    export fn measure(self: &EditPane(A), avail: i64) -> Size { return Size { w: 0, h: 0 }; }
+
+    export fn sizing(self: &EditPane(A)) -> Sizing {
+        return Sizing { w: tui::fill(1), h: tui::fill(1) };
+    }
+
+    export fn render(self: &EditPane(A), mut f: &Frame(A), area: Rect) -> void {
+        f.fill(std::copy(area), &self.look.normal);
+
+        var pens: Pen[] = [];
+
+        for (let s: &self::&tui::Style in &self.look.syn) { pens.push(f.pen(s)); }
+        let normal: Pen = f.pen(&self.look.normal);
+        let search: Pen = f.pen(&self.look.search);
+        let gut: Pen = f.pen(&self.look.gutter);
+        let gut_cur: Pen = f.pen(&self.look.gutter_current);
+        let gut_err: Pen = f.pen(&self.look.gutter_error);
+        let git_pens: Pen[] = [
+            std::copy(gut), f.pen(&self.look.git_add), f.pen(&self.look.git_change),
+            f.pen(&self.look.git_delete), f.pen(&self.look.git_delete)
+        ];
+        var marks: string[] = ["", "▎", "▎", "▁", "▔"];
+
+        if (!self.icons) { marks = ["", "+", "~", "_", "-"]; }
+
+        let x0: i64 = area.x + self.gutter;
+        let w: i64 = area.w - self.gutter;
+
+        for (let y: i64, let vl: &self::&VisLine in &self.lines) {
+            if (y >= area.h) { break; }
+            let row: i64 = area.y + y;
+
+            if (vl.no == 0) {
+                if (self.tildes) { f.print(x0, row, &"~", 0, 1, &gut, 1); }
+                continue;
+            }
+            // (git sign in the gutter's first column)
+            if (self.gutter > 0 && vl.sign > 0 && vl.sign < marks.len) {
+                f.print(area.x, row, &marks[vl.sign], 0, marks[vl.sign].len, &git_pens[vl.sign], 1);
+            }
+            if (self.gutter > 1) {
+                let num: string = str::pad_start("\(vl.no)", self.gutter - 2, ' ');
+                var p: Pen = std::copy(gut);
+
+                if (vl.current) { p = std::copy(gut_cur); }
+                if (vl.diag) { p = std::copy(gut_err); }
+                f.print(area.x + 1, row, &num, 0, num.len, &p, self.gutter - 1);
+            }
+            if (w > 0) {
+                line(f, vl, x0, row, w, self.left, self.tabstop, &pens, &normal, &search);
+                if (vl.sel_lo >= 0) {
+                    var a: i64 = vl.sel_lo - self.left;
+                    var e: i64 = vl.sel_hi - self.left;
