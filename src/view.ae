@@ -52,3 +52,97 @@ impl EditPane(A) as Node(A) {
                 if (vl.sel_lo >= 0) {
                     var a: i64 = vl.sel_lo - self.left;
                     var e: i64 = vl.sel_hi - self.left;
+
+// draws a line's text from column left, w cells, at (x0, y): highlight
+// pens, search matches over them, tabs expanded to the stops
+fn line(
+    A; mut f: &Frame(A), vl: &VisLine, x0: i64, y: i64, w: i64, left: i64, ts: i64, pens: &Pen[],
+    normal: &Pen, search: &Pen
+) -> void {
+    let t: &string = &vl.text;
+    let n: i64 = t.len;
+    let nh: i64 = vl.hls.len;
+    let nm: i64 = vl.matches.len;
+    var i: i64 = 0;
+    var col: i64 = 0;
+    var hi: i64 = 0;
+    var mi: i64 = 0;
+
+    while (i < n && col - left < w) {
+        while (hi < nh && vl.hls[hi].hi <= i) { hi += 1; }
+
+        while (mi + 1 < nm && vl.matches[mi + 1] <= i) { mi += 2; }
+        let in_match: bool = mi + 1 < nm && vl.matches[mi] <= i;
+        let in_span: bool = hi < nh && vl.hls[hi].lo <= i;
+        var end: i64 = n;
+
+        if (in_match) {
+            if (vl.matches[mi + 1] < end) { end = vl.matches[mi + 1]; }
+        } else if (mi < nm && vl.matches[mi] < end) {
+            end = vl.matches[mi];
+        }
+        if (in_span) {
+            if (vl.hls[hi].hi < end) { end = vl.hls[hi].hi; }
+        } else if (hi < nh && vl.hls[hi].lo < end) {
+            end = vl.hls[hi].lo;
+        }
+        var p: &Pen = normal;
+
+        if (in_match) { p = search; } else if (in_span) { p = &pens[vl.hls[hi].g as i64]; }
+        // a tab: spaces up to the next stop
+        if (t[i] == 9) {
+            let cw: i64 = ts - col % ts;
+
+            for (let c: i64 in col..(col + cw)) {
+                if (c >= left && c - left < w) { f.put(x0 + c - left, y, ' ', p); }
+            }
+            col += cw;
+            i += 1;
+            continue;
+        }
+        // the run i..end (stops at a tab)
+        var j: i64 = i;
+        var run_w: i64 = 0;
+        var c: i64 = col;
+
+        while (j < end && t[j] != 9) {
+            let cw: i64 = cell_width(t, j, c, ts);
+
+            if (c < left) {
+                // left of the window: skipped (a wide char cut by the edge: a space)
+                if (c + cw > left) {
+                    for (let k: i64 in left..(c + cw)) {
+                        if (k - left < w) { f.put(x0 + k - left, y, ' ', p); }
+                    }
+                }
+                c += cw;
+                j = next_char(t, j);
+                i = j;
+                col = c;
+                continue;
+            }
+            run_w += cw;
+            c += cw;
+            j = next_char(t, j);
+        }
+        if (run_w > 0) {
+            let room: i64 = w - (col - left);
+            let used: i64 = f.print(x0 + col - left, y, t, i, j, p, room);
+
+            if (used < run_w) {
+                return;
+            }
+        }
+        col = c;
+        i = j;
+    }
+}
+
+// ---- the intro --------------------------------------------------------------------------
+
+let LOGO: string[] = [
+    "╺━┓┏━┓┏━┓",
+    "┏━┛┣━┫┣━┛",
+    "┗━╸╹ ╹╹  "
+];
+let LOGO_LINES: i64 = 4;
