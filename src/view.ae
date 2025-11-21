@@ -146,3 +146,64 @@ let LOGO: string[] = [
     "┗━╸╹ ╹╹  "
 ];
 let LOGO_LINES: i64 = 4;
+
+// ---- the whole screen ----------------------------------------------------------------
+
+/// app's frame: paints what prepare read
+export fn view(s: &App) -> Node(App) {
+    var cx: i64 = -1;
+    var cy: i64 = -1;
+
+    if (!s.focus_tree && s.mode != Mode::Command && s.mode != Mode::Search && s.picking.len == 0 &&
+        !s.sheet_on() && !s.viewing()) {
+        let l: string = s.vis_line(s.b.cy);
+
+        cx = col_of(&l, s.b.cx, s.b.tabstop) - s.b.left;
+        cy = s.b.cy - s.b.top;
+    }
+    var intro: tui::Span[][] = [];
+
+    if (s.intro()) { intro = intro_lines(s); }
+    var pane: Node(App) = EditPane {
+        lines: std::copy(s.vis), gutter: s.gutter, left: s.b.left, tabstop: s.b.tabstop,
+        tildes: s.cfg.tildes, icons: s.cfg.icons, look: std::copy(s.look), cx: cx, cy: cy,
+        intro: intro, ghost: ghost_of(s)
+    };
+
+    if (s.viewing()) {
+        pane = DiagramPane { vis: std::copy(s.diagram_vis), look: std::copy(s.look) };
+    } else if (s.sheet_on()) {
+        let editing: bool = s.mode == Mode::Search && str::eq(s.cmd_kind, "cell");
+
+        pane = SheetPane {
+            vis: std::copy(s.sheet_vis), look: std::copy(s.look), editing: editing,
+            prompt: s.cmd_prompt(),
+            input: s.cmd.text, at: s.cmd.cursor
+        };
+    }
+    let edit: Node(App) = tui::Block {
+        border: tui::Border::None, width: tui::fill(1), height: tui::fill(1),
+        on_click: fn(a, c) -> { a.click_edit(c.x, c.y); },
+        child: pane
+    };
+    var top: Node(App) = tui::Spacer {};
+
+    if (s.split.at <= 0) {
+        top = edit;
+    } else {
+        top = tui::Split {
+            state: std::copy(s.split), divider: " ", style: std::copy(s.look.divider), min: 4,
+            height: tui::fill(1),
+            first: tui::Block {
+                border: tui::Border::None, on_click: fn(a, c) -> { a.click_tree(c.y); },
+                child: TreePane { rows: std::copy(s.tree_vis), look: std::copy(s.look) }
+            },
+            second: edit
+        };
+    }
+    var kids: Node(App)[] = [top];
+
+    if (s.panel.len > 0) { kids.push(panel(s)); }
+    kids.push(status(s));
+    if (s.cmd_line_shown()) { kids.push(bottom(s)); }
+    let main: Node(App) = tui::Column { children: kids, style: std::copy(s.look.normal) };
