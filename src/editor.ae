@@ -215,3 +215,66 @@ impl App as Model {
 
     fn done(self: &App) -> bool { return self.quit; }
 }
+
+    // editor window
+    fn prepare_lines(mut self: &App) -> void {
+        self.vis.clear();
+        let h: i64 = self.edit_h;
+        let hl: bool = self.hl && self.matcher.pattern.len > 0;
+        let m: Matcher = std::copy(self.matcher);
+        let top: i64 = self.b.top;
+        let lang: string = self.b.ft.syntax;
+        // (cache: kept if it is of this text and reaches the top)
+        let same: bool = self.hl_id == self.b.id && self.hl_gen == self.b.gen &&
+            str::eq(self.hl_lang, lang) && top >= self.hl_from &&
+            top <= self.hl_from + self.hl_rows.len && self.hl_rows.len > 0;
+        var state: i64 = 0;
+
+        if (same && top > self.hl_from) {
+            state = self.hl_after[top - self.hl_from - 1];
+            // (far below its start: drop the lines above the screen)
+            let gone: i64 = top - self.hl_from;
+
+            if (gone > 512) {
+                var rows: Hl[][] = [];
+                var after: i64[] = [];
+
+                for (let k: i64 in gone..self.hl_rows.len) {
+                    rows.push(std::take(mut &self.hl_rows[k]));
+                    after.push(self.hl_after[k]);
+                }
+                self.hl_rows = rows;
+                self.hl_after = after;
+                self.hl_from = top;
+            }
+        } else if (let s = self.b.state_at(top)) {
+            state = s;
+            self.hl_rows = [];
+            self.hl_after = [];
+            self.hl_from = top;
+        } else {
+            // saved states do not reach here yet: the background finds them and
+            // the lines are repainted; meanwhile, the nearest guess (start state, not
+            // kept)
+            self.want_states = top;
+            self.hl_rows = [];
+            self.hl_after = [];
+            self.hl_from = -1;
+        }
+        self.hl_id = self.b.id;
+        self.hl_gen = self.b.gen;
+        self.hl_lang = lang;
+        // shown lines with a diagnostic
+        var diag_at: bool[] = [];
+
+        for (let y: i64 in 0..h) { diag_at.push(false); }
+
+        for (let d: &self::&Diag in &self.b.diags) {
+            if (d.line >= top && d.line < top + h) { diag_at[d.line - top] = true; }
+        }
+        // selection: its lines, and its ends or columns
+        let selecting: bool = self.mode == Mode::Visual;
+        var sy1: i64 = -1;
+        var sy2: i64 = -2;
+        var ends: (i64, i64, i64, i64) = (0, 0, 0, 0);
+        var cols: (i64, i64) = (0, 0);
