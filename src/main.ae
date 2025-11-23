@@ -48,3 +48,73 @@ fn on_event(mut ui: &tui::Ui(App), mut app: &App, e: tui::Event) -> void {
 
                 if (kind == term::MouseKind::ScrollLeft || kind == term_up()) { dir = -2; }
                 let d: i64 = app.wheel_amount(dir, 4, time::since_epoch() / 1ms);
+
+async fn main(args: string[]) -> i32 {
+    var cwd: string = process::env("PWD");
+
+    if (cwd.len == 0) { cwd = "."; }
+    cwd = path::clean(cwd);
+    var files: string[] = [];
+    var line: i64 = 0;
+    var dir_given: bool = false;
+
+    for (let i: i64 in 1..args.len) {
+        let a: string = args[i];
+
+        if (str::eq(a, "-h") || str::eq(a, "--help")) {
+            println(
+                "zap [file...] [+line]: an editor (:help inside; config: \(cfgm::config_path()))"
+            );
+            return 0;
+        }
+        if (str::starts_with(a, "+")) {
+            match (str::parse_int(str::substr(a, 1, a.len - 1))) {
+                n => { line = n; },
+                e: str::BadInt => {}
+            }
+            continue;
+        }
+        var p: string = a;
+
+        // (on AeOS, @NAME/... is another program's space, like /@NAME/...)
+        if (str::starts_with(p, "@")) { p = "/\(p)"; }
+        if (!path::is_absolute(p)) { p = path::join(cwd, p); }
+        match (await fs::info(p)) {
+            inf => {
+                if (inf.kind == fs::Kind::Dir) {
+                    cwd = path::clean(p);
+                    dir_given = true;
+                    continue;
+                }
+            },
+            e: fs::NotFound => {}, e2: fs::PermissionDenied => {}, e3: fs::IoError => {}
+        }
+        files.push(p);
+    }
+    // a file outside cwd (and no directory given): root the tree at its directory
+    // (zap /@aec/hello.ae shows aec's files, not the start directory)
+    if (!dir_given && files.len > 0 && !path::is_within(cwd, files[0])) {
+        let d: string = path::dir(files[0]);
+
+        if (d.len > 0) { cwd = path::clean(d); }
+    }
+    let cfg: cfgm::Config = cfgm::load(cwd);
+    var app: App = editor::app(cfg, cwd);
+
+    // (over ssh the system clipboard is the remote host's: OSC 52 only)
+    app.native_clip = process::env("SSH_TTY").len == 0 && process::env("SSH_CONNECTION").len == 0;
+    app.recall_cmd_history();
+    app.splash = files.len == 0;
+
+    for (let f: string in &files) { app.edit(f); }
+    if (line > 0) { app.ex("\(line)"); }
+    if (app.cfg.untrusted.len > 0) {
+        app.fail_msg("\(app.cfg.untrusted) is not trusted, so not read (:trust reads it)");
+    }
+    var ui = match (tui::open(view::view)) {
+        u => u,
+        e: tui::NotATerminal => {
+            eprintln("zap: standard input is not a terminal");
+            return 1;
+        }
+    };
