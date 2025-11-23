@@ -278,3 +278,70 @@ impl App as Model {
         var sy2: i64 = -2;
         var ends: (i64, i64, i64, i64) = (0, 0, 0, 0);
         var cols: (i64, i64) = (0, 0);
+
+        if (selecting) {
+            ends = self.sel_ends();
+            let (a, e) = self.sel_lines();
+
+            sy1 = a;
+            sy2 = e;
+            if (self.vkind == 1) {
+                sy1 = ends.0;
+                sy2 = ends.2;
+            }
+            if (self.vkind == 3) { cols = self.block_cols(); }
+        }
+        let ts: i64 = self.b.tabstop;
+
+        for (let y: i64 in 0..h) {
+            let i: i64 = top + y;
+
+            if (i >= self.b.text.count) {
+                self.vis.push(VisLine { no: 0 });
+                continue;
+            }
+            let t: string = self.b.text.get(i);
+            var hls: Hl[] = [];
+
+            if (self.hl_from >= 0) {
+                let (got, after) = self.cached_hls(i, &t, state, &lang);
+
+                hls = got;
+                state = after;
+            } else if (syntax::known(lang)) {
+                state = syntax::line(lang, &t, state, mut &hls);
+            }
+            var ms: i64[] = [];
+
+            if (hl) { ms = m.all(&t); }
+            let dg: bool = diag_at[y];
+            var lo: i64 = -1;
+            var hi: i64 = 0;
+
+            if (i >= sy1 && i <= sy2) {
+                // (a selected line end: one cell past it, for its newline)
+                let end_col: i64 = col_of(&t, t.len, ts);
+
+                if (self.vkind == 2) {
+                    lo = 0;
+                    hi = end_col + 1;
+                } else if (self.vkind == 3) {
+                    lo = cols.0;
+                    hi = cols.1;
+                } else {
+                    lo = 0;
+                    if (i == ends.0) { lo = col_of(&t, ends.1, ts); }
+                    hi = end_col + 1;
+                    if (i == ends.2) { hi = col_of(&t, ends.3, ts); }
+                }
+                if (hi <= lo) { lo = -1; }
+            }
+            var sign: i64 = git::NONE;
+
+            if (self.cfg.gitsigns && i < self.b.signs.len) { sign = self.b.signs[i]; }
+            self.vis.push(VisLine {
+                no: i + 1, text: t, hls: hls, matches: ms, diag: dg, current: i == self.b.cy,
+                sel_lo: lo, sel_hi: hi, sign: sign
+            });
+        }
+    }
