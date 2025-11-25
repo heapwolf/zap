@@ -216,6 +216,116 @@ impl App as Model {
     fn done(self: &App) -> bool { return self.quit; }
 }
 
+// ---- small helpers ------------------------------------------------------------------
+
+// count at toks[i..] (0: none; a leading 0 is a motion) -> count, index
+// of the next token
+fn read_count(toks: &string[], i0: i64) -> (i64, i64) {
+    var i: i64 = i0;
+    var count: i64 = 0;
+
+    while (i < toks.len && is_digit_tok(&toks[i]) && !(count == 0 && str::eq(toks[i], "0"))) {
+        count = count * 10 + ((toks[i][0] as i64) - 48);
+        i += 1;
+    }
+    return (count, i);
+}
+
+fn is_digit_tok(t: &string) -> bool { return t.len == 1 && t[0] >= '0' && t[0] <= '9'; }
+
+fn first_non_blank(s: &string) -> i64 {
+    var i: i64 = 0;
+
+    while (i < s.len && (s[i] == ' ' || s[i] == '\t')) { i += 1; }
+    return i;
+}
+
+fn indent_of(s: &string) -> string { return str::substr(*s, 0, first_non_blank(s)); }
+
+// does w start with prefix (fold: ignore case)?
+fn starts_like(w: &string, prefix: &string, fold: bool) -> bool {
+    if (w.len <= prefix.len) {
+        return prefix.len == 0 && w.len > 0;
+    }
+    if (fold) {
+        return str::starts_with(str::to_lower(*w), str::to_lower(*prefix));
+    }
+    return str::starts_with(*w, *prefix);
+}
+
+// is word w among completions xs?
+fn has_item(xs: &CompItem[], w: &string) -> bool {
+    for (let it: &xs::&CompItem in xs) {
+        if (str::eq(it.word, *w)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// sorts xs by word
+fn sort_items(mut xs: &CompItem[]) -> void {
+    let n: i64 = xs.len;
+
+    for (let i: i64 in 1..n) {
+        var j: i64 = i;
+
+        while (j > 0 && str::cmp(xs[j].word, xs[j - 1].word) < 0) {
+            let t: CompItem = std::copy(xs[j]);
+
+            xs[j] = std::copy(xs[j - 1]);
+            xs[j - 1] = t;
+            j -= 1;
+        }
+    }
+}
+
+// max completions, and how many lines from the cursor to search
+let COMP_MAX: i64 = 60;
+let COMP_LINES: i64 = 1500;
+
+// words of line l starting with prefix (low: lowercased; fold: ignore
+// case), not yet in out, added to it (skip: byte of the word being typed)
+fn words_in(
+    l: &string, prefix: &string, low: &string, fold: bool, skip: i64, mut out: &string[]
+) -> void {
+    let n: i64 = l.len;
+    let pn: i64 = prefix.len;
+    var i: i64 = 0;
+
+    while (i < n && out.len < COMP_MAX) {
+        if (!wordy(l[i])) {
+            i += 1;
+            continue;
+        }
+        var e: i64 = i;
+
+        while (e < n && wordy(l[e])) { e += 1; }
+        if (e - i > pn && i != skip && !(l[i] >= '0' && l[i] <= '9')) {
+            let w: string = str::substr(*l, i, e - i);
+            var hit: bool = false;
+
+            if (fold) {
+                hit = str::starts_with(str::to_lower(w), *low);
+            } else {
+                hit = str::starts_with(w, *prefix);
+            }
+            if (hit) {
+                var seen: bool = false;
+
+                for (let o: string in out) {
+                    if (str::eq(o, w)) {
+                        seen = true;
+                        break;
+                    }
+                }
+                if (!seen) { out.push(w); }
+            }
+        }
+        i = e;
+    }
+}
+
     // editor window
     fn prepare_lines(mut self: &App) -> void {
         self.vis.clear();
