@@ -455,3 +455,60 @@ fn words_in(
             });
         }
     }
+
+    /// handles key k in the current mode
+    export fn key(mut self: &App, k: &tui::Key) -> void {
+        let t: string = token(k);
+
+        if (self.mode != Mode::Insert) { self.comp = []; }
+        if (self.panel.len > 0 && self.mode != Mode::Command && self.mode != Mode::Search) {
+            self.panel = [];
+            if (str::eq(t, "<CR>") || str::eq(t, "<Esc>") || str::eq(t, "<Space>") ||
+                str::eq(t, "q")) {
+                return;
+            }
+        }
+        if (self.mode == Mode::Command || self.mode == Mode::Search) {
+            self.cmd_key(k, &t);
+            return;
+        }
+        if (self.mode == Mode::Insert) {
+            if (self.mapped("insert", &t)) {
+                return;
+            }
+            self.insert_key(&t, k);
+            self.after();
+            return;
+        }
+        // (a message stays its time; Esc dismisses it)
+        if (self.msg.len > 0 && self.pending.len == 0 && str::eq(t, "<Esc>")) { self.msg = ""; }
+        self.pending.push(t);
+        var mode: string = "normal";
+
+        if (self.focus_tree) { mode = "tree"; }
+        if (self.mode == Mode::Visual) { mode = "visual"; }
+        // a configured binding: fully typed, or only its start
+        var exact: string = "";
+        var longer: bool = false;
+
+        for (let m: &self::&Keymap in &self.cfg.maps) {
+            if (!str::eq(m.mode, mode) || self.cfg.disabled_addin(m.addin)) { continue; }
+            if (m.keys.len < self.pending.len) { continue; }
+            var same: bool = true;
+
+            for (let i: i64, let p: string in &self.pending) {
+                if (!str::eq(p, m.keys[i])) { same = false; }
+            }
+            if (!same) { continue; }
+            if (m.keys.len == self.pending.len) { exact = m.cmd; } else { longer = true; }
+        }
+        if (exact.len > 0 && !longer) {
+            self.pending = [];
+            self.ex(exact);
+            self.after();
+            return;
+        }
+        if (longer) {
+            return;
+        }
+        var toks: string[] = std::copy(self.pending);
