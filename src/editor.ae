@@ -512,3 +512,54 @@ fn words_in(
             return;
         }
         var toks: string[] = std::copy(self.pending);
+
+        // (h l Left Right held down go a little further each repeat; not in the
+        // tree, where they close and open)
+        if (toks.len == 1 && !self.focus_tree) {
+            let steps: i64 = self.held_steps(&toks[0]);
+
+            if (steps > 1) { toks = ["\(steps)", toks[0]]; }
+        }
+        var r: i64 = 2;
+
+        if (self.mode == Mode::Visual) {
+            r = self.visual_cmd(&toks);
+        } else if (self.focus_tree) {
+            r = self.tree_cmd(&toks);
+        } else if (self.viewing()) {
+            r = self.viewer_cmd(&toks);
+        } else if (self.sheet_on()) {
+            r = self.sheet_cmd(&toks);
+        } else {
+            r = self.normal_cmd(&toks);
+        }
+        if (r == 0 && exact.len == 0) {
+            return;
+        }
+        if (r == 2 && exact.len > 0) {
+            self.pending = [];
+            self.ex(exact);
+            self.after();
+            return;
+        }
+        self.pending = [];
+        self.after();
+    }
+
+    // runs mode's binding for the single token t (insert mode: no sequences)
+    fn mapped(mut self: &App, mode: string, t: &string) -> bool {
+        var cmd: string = "";
+
+        for (let m: &self::&Keymap in &self.cfg.maps) {
+            if (str::eq(m.mode, mode) && m.keys.len == 1 && str::eq(m.keys[0], *t) &&
+                !self.cfg.disabled_addin(m.addin)) {
+                cmd = m.cmd;
+            }
+        }
+        if (cmd.len == 0) {
+            return false;
+        }
+        self.ex(cmd);
+        self.after();
+        return true;
+    }
