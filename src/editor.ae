@@ -563,3 +563,85 @@ fn words_in(
         self.after();
         return true;
     }
+
+    // after a key: keeps the cursor in, the view on it
+    fn after(mut self: &App) -> void {
+        if (self.b.readonly && (self.b.refused || self.mode == Mode::Insert)) {
+            self.b.refused = false;
+            self.blk = [];
+            self.b.commit();
+            if (self.mode == Mode::Insert) { self.mode = Mode::Normal; }
+            self.fail_msg("E21: Cannot make changes, the buffer is read-only (q closes it)");
+        }
+        self.fix_cursor();
+        self.scroll();
+    }
+
+    // ---- normal mode ---------------------------------------------------------------
+
+    // motion at toks[i..] (count times) from the cursor
+    fn motion(mut self: &App, toks: &string[], i: i64, count: i64) -> Motion {
+        let n: i64 = toks.len;
+
+        if (i >= n) {
+            return Motion { state: 0 };
+        }
+        let t: string = toks[i];
+        var c: i64 = count;
+
+        if (c < 1) { c = 1; }
+        let y: i64 = self.b.cy;
+        let x: i64 = self.b.cx;
+        let l: string = self.b.text.get(y);
+        let last: i64 = self.b.text.count - 1;
+
+        match (t) {
+            "h" | "<Left>" | "<BS>" => {
+                var nx: i64 = x;
+
+                for (let k: i64 in 0..c) { nx = prev_char(&l, nx); }
+                return Motion { state: 1, y: y, x: nx, used: 1 };
+            },
+            "l" | "<Right>" => {
+                var nx: i64 = x;
+
+                for (let k: i64 in 0..c) {
+                    if (nx < l.len) { nx = next_char(&l, nx); }
+                }
+                return Motion { state: 1, y: y, x: nx, used: 1 };
+            },
+            "j" | "<Down>" | "<C-n>" | "<C-j>" => {
+                var ny: i64 = y + c;
+
+                if (ny > last) { ny = last; }
+                return Motion { state: 1, y: ny, x: -1, linewise: true, used: 1 };
+            },
+            "k" | "<Up>" | "<C-p>" => {
+                var ny: i64 = y - c;
+
+                if (ny < 0) { ny = 0; }
+                return Motion { state: 1, y: ny, x: -1, linewise: true, used: 1 };
+            },
+            "0" | "<Home>" => { return Motion { state: 1, y: y, x: 0, used: 1 }; },
+            "^" => { return Motion { state: 1, y: y, x: first_non_blank(&l), used: 1 }; },
+            "$" | "<End>" => {
+                var ny: i64 = y + c - 1;
+
+                if (ny > last) { ny = last; }
+                let nl: string = self.b.text.get(ny);
+
+                return Motion { state: 1, y: ny, x: nl.len, inclusive: false, used: 1 };
+            },
+            "G" => {
+                var ny: i64 = last;
+
+                if (count > 0) { ny = count - 1; }
+                if (ny > last) { ny = last; }
+                return Motion { state: 1, y: ny, x: -2, linewise: true, used: 1 };
+            },
+            "g" => {
+                if (i + 1 >= n) {
+                    return Motion { state: 0 };
+                }
+                if (str::eq(toks[i + 1], "g")) {
+                    var ny: i64 = 0;
