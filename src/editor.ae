@@ -645,3 +645,92 @@ fn words_in(
                 }
                 if (str::eq(toks[i + 1], "g")) {
                     var ny: i64 = 0;
+
+                    if (count > 0) { ny = count - 1; }
+                    if (ny > last) { ny = last; }
+                    return Motion { state: 1, y: ny, x: -2, linewise: true, used: 2 };
+                }
+                if (str::eq(toks[i + 1], "_")) {
+                    var e: i64 = l.len;
+
+                    while (e > 0 && (l[e - 1] == ' ' || l[e - 1] == '\t')) { e -= 1; }
+                    return Motion { state: 1, y: y, x: prev_char(&l, e), inclusive: true, used: 2 };
+                }
+                return Motion { state: 2 };
+            },
+            "w" | "W" => {
+                var p: (i64, i64) = (y, x);
+
+                for (let k: i64 in 0..c) { p = self.word_fwd(p.0, p.1, str::eq(t, "W")); }
+                return Motion { state: 1, y: p.0, x: p.1, used: 1 };
+            },
+            "b" | "B" => {
+                var p: (i64, i64) = (y, x);
+
+                for (let k: i64 in 0..c) { p = self.word_back(p.0, p.1, str::eq(t, "B")); }
+                return Motion { state: 1, y: p.0, x: p.1, used: 1 };
+            },
+            "e" | "E" => {
+                var p: (i64, i64) = (y, x);
+
+                for (let k: i64 in 0..c) { p = self.word_end(p.0, p.1, str::eq(t, "E")); }
+                return Motion { state: 1, y: p.0, x: p.1, inclusive: true, used: 1 };
+            },
+            "}" => {
+                var ny: i64 = y;
+
+                for (let k: i64 in 0..c) { ny = self.paragraph(ny, 1); }
+                return Motion { state: 1, y: ny, x: 0, used: 1 };
+            },
+            "{" => {
+                var ny: i64 = y;
+
+                for (let k: i64 in 0..c) { ny = self.paragraph(ny, -1); }
+                return Motion { state: 1, y: ny, x: 0, used: 1 };
+            },
+            "H" => { return Motion { state: 1, y: self.b.top, x: -2, linewise: true, used: 1 }; },
+            "L" => {
+                var ny: i64 = self.b.top + self.edit_h - 1;
+
+                if (ny > last) { ny = last; }
+                return Motion { state: 1, y: ny, x: -2, linewise: true, used: 1 };
+            },
+            "M" => {
+                var ny: i64 = self.b.top + self.edit_h / 2;
+
+                if (ny > last) { ny = last; }
+                return Motion { state: 1, y: ny, x: -2, linewise: true, used: 1 };
+            },
+            "f" | "t" | "F" | "T" => {
+                if (i + 1 >= n) {
+                    return Motion { state: 0 };
+                }
+                self.last_find = "\(t)\(toks[i + 1])";
+                return self.find_char(t, toks[i + 1], c, 2);
+            },
+            ";" | "," => {
+                if (self.last_find.len < 2) {
+                    return Motion { state: 2 };
+                }
+                var kind: string = str::substr(self.last_find, 0, 1);
+
+                if (str::eq(t, ",")) {
+                    match (kind) {
+                        "f" => { kind = "F"; }, "F" => { kind = "f"; }, "t" => { kind = "T"; },
+                        "T" => { kind = "t"; }, _ => {}
+                    }
+                }
+                let ch: string = str::substr(self.last_find, 1, self.last_find.len - 1);
+
+                return self.find_char(kind, ch, c, 1);
+            },
+            "%" => {
+                if (let p = self.matching(y, x)) {
+                    return Motion { state: 1, y: p.0, x: p.1, inclusive: true, used: 1 };
+                }
+                return Motion { state: 2 };
+            },
+            _ => {}
+        }
+        return Motion { state: 2 };
+    }
