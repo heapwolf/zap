@@ -326,6 +326,113 @@ fn words_in(
     }
 }
 
+    /// makes a scratch buffer name with text current (replacing one of that name)
+    export fn show_scratch(mut self: &App, name: string, text: string) -> void {
+        if (self.b.scratch && str::eq(self.b.name, name)) {
+            let id: i64 = self.b.id;
+
+            self.b = bufm::scratch(id, name, text);
+            return;
+        }
+        var have: i64 = -1;
+
+        for (let i: i64, let o: &self::&Buf in &self.others) {
+            if (o.scratch && str::eq(o.name, name)) { have = i; }
+        }
+        if (have >= 0) {
+            let id: i64 = self.others[have].id;
+
+            self.others[have] = bufm::scratch(id, name, text);
+            self.switch_id(id);
+            return;
+        }
+        let id: i64 = self.next_id;
+
+        self.others.push(bufm::scratch(id, name, text));
+        self.next_id += 1;
+        self.switch_id(id);
+    }
+
+    // selects the current buffer's file in the tree
+    fn reveal(mut self: &App) -> void {
+        let p: string = self.b.path;
+
+        if (p.len == 0) {
+            return;
+        }
+        let i: i64 = self.tree.reveal(p);
+
+        if (i >= 0) { self.tree.select(i, self.tree_h); }
+    }
+
+    // ---- the cursor and the view -----------------------------------------------------
+
+    /// keeps the cursor inside the buffer and (normal mode) on a character
+    fn fix_cursor(mut self: &App) -> void {
+        self.b.clamp();
+        if (self.mode != Mode::Insert) {
+            let l: string = self.b.text.get(self.b.cy);
+
+            if (self.b.cx >= l.len && l.len > 0) { self.b.cx = prev_char(&l, l.len); }
+        }
+    }
+
+    // moves the cursor to line y, byte x (set_want: the wanted column follows)
+    fn go(mut self: &App, y: i64, x: i64, set_want: bool) -> void {
+        self.b.cy = y;
+        self.b.cx = x;
+        self.b.clamp();
+        if (set_want) {
+            let l: string = self.b.text.get(self.b.cy);
+
+            self.b.want = col_of(&l, self.b.cx, self.b.tabstop);
+        }
+        self.fix_cursor();
+    }
+
+    // moves the cursor to line y, at its wanted column
+    fn go_line(mut self: &App, y: i64) -> void {
+        var yy: i64 = y;
+
+        if (yy >= self.b.text.count) { yy = self.b.text.count - 1; }
+        if (yy < 0) { yy = 0; }
+        self.b.cy = yy;
+        let l: string = self.b.text.get(yy);
+
+        self.b.cx = byte_at(&l, self.b.want, self.b.tabstop);
+        self.fix_cursor();
+    }
+
+    /// scrolls so the cursor shows (scrolloff lines around it)
+    export fn scroll(mut self: &App) -> void {
+        let h: i64 = self.edit_h;
+        var so: i64 = self.cfg.scrolloff;
+
+        if (so * 2 >= h) { so = (h - 1) / 2; }
+        if (so < 0) { so = 0; }
+        let tw: i64 = self.edit_w - self.gutter;
+
+        if (self.b.cy < self.b.top + so) { self.b.top = self.b.cy - so; }
+        if (self.b.cy >= self.b.top + h - so) { self.b.top = self.b.cy - h + so + 1; }
+        if (self.b.top > self.b.text.count - 1) { self.b.top = self.b.text.count - 1; }
+        if (self.b.top < 0) { self.b.top = 0; }
+        // (sideways: the view follows the cursor once it moves; until then, a
+        // sideways wheel's view stays)
+        if (self.b.cy == self.seen_cy && self.b.cx == self.seen_cx && self.b.id == self.seen_id) {
+            if (self.b.left < 0) { self.b.left = 0; }
+            return;
+        }
+        self.seen_cy = self.b.cy;
+        self.seen_cx = self.b.cx;
+        self.seen_id = self.b.id;
+        let l: string = self.b.text.get(self.b.cy);
+        let c: i64 = col_of(&l, self.b.cx, self.b.tabstop);
+
+        if (c < self.b.left) { self.b.left = c; }
+        if (tw > 0 && c >= self.b.left + tw) { self.b.left = c - tw + 1; }
+        if (self.b.left < 0) { self.b.left = 0; }
+    }
+
     // editor window
     fn prepare_lines(mut self: &App) -> void {
         self.vis.clear();
