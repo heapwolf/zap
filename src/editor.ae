@@ -841,3 +841,107 @@ fn words_in(
         }
         return Motion { state: 2 };
     }
+
+    // f/t/F/T: the count-th ch on the line
+    fn find_char(mut self: &App, kind: string, ch: string, count: i64, used: i64) -> Motion {
+        let l: string = self.b.text.get(self.b.cy);
+        var x: i64 = self.b.cx;
+        let fwd: bool = str::eq(kind, "f") || str::eq(kind, "t");
+        let till: bool = str::eq(kind, "t") || str::eq(kind, "T");
+        var c: string = ch;
+
+        if (str::eq(c, "<Space>")) { c = " "; }
+        if (str::eq(c, "<lt>")) { c = "<"; }
+
+        for (let k: i64 in 0..count) {
+            if (fwd) {
+                var start: i64 = next_char(&l, x);
+
+                if (till && k == 0) { start = next_char(&l, start); }
+                if (let at = str::find_from(l, c, start)) {
+                    x = at;
+                } else {
+                    return Motion { state: 2 };
+                }
+            } else {
+                var found: i64 = -1;
+                var j: i64 = 0;
+                var lim: i64 = x;
+
+                if (till && k == 0) { lim = prev_char(&l, x); }
+
+                while (true) {
+                    if (let at = str::find_from(l, c, j)) {
+                        if (at >= lim) { break; }
+                        found = at;
+                        j = at + 1;
+                    } else {
+                        break;
+                    }
+                }
+                if (found < 0) {
+                    return Motion { state: 2 };
+                }
+                x = found;
+            }
+        }
+        if (till) {
+            if (fwd) { x = prev_char(&l, x); } else { x = next_char(&l, x); }
+        }
+        return Motion { state: 1, y: self.b.cy, x: x, inclusive: fwd, used: used };
+    }
+
+    // next word start from (y, x)
+    fn word_fwd(mut self: &App, y0: i64, x0: i64, big: bool) -> (i64, i64) {
+        var y: i64 = y0;
+        var x: i64 = x0;
+        var l: string = self.b.text.get(y);
+
+        if (x < l.len) {
+            let c0: i64 = class(l[x], big);
+
+            while (x < l.len && class(l[x], big) == c0 && c0 != 0) { x = next_char(&l, x); }
+        }
+
+        while (true) {
+            while (x < l.len && class(l[x], big) == 0) { x += 1; }
+            if (x < l.len) {
+                return (y, x);
+            }
+            if (y + 1 >= self.b.text.count) {
+                return (y, l.len);
+            }
+            y += 1;
+            x = 0;
+            l = self.b.text.get(y);
+            if (l.len == 0) {
+                return (y, 0);
+            }
+        }
+        return (y, x);
+    }
+
+    // start of the word before (y, x)
+    fn word_back(mut self: &App, y0: i64, x0: i64, big: bool) -> (i64, i64) {
+        var y: i64 = y0;
+        var x: i64 = x0;
+        var l: string = self.b.text.get(y);
+
+        while (true) {
+            while (x > 0 && class(l[prev_char(&l, x)], big) == 0) { x = prev_char(&l, x); }
+            if (x > 0) { break; }
+            if (y == 0) {
+                return (0, 0);
+            }
+            y -= 1;
+            l = self.b.text.get(y);
+            x = l.len;
+            if (l.len == 0) {
+                return (y, 0);
+            }
+        }
+        let c0: i64 = class(l[prev_char(&l, x)], big);
+
+        while (x > 0 && class(l[prev_char(&l, x)], big) == c0) { x = prev_char(&l, x); }
+        return (y, x);
+    }
