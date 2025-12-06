@@ -227,3 +227,100 @@ impl Matcher {
         }
         return self.find_plain(s, start);
     }
+
+    /// insert text at line y, byte x (newlines split the line) -> where it
+    /// ends (line, byte)
+    export fn put(mut self: &Buf, y: i64, x: i64, text: string) -> (i64, i64) {
+        let l: string = self.text.get(y);
+        let head: string = str::substr(l, 0, x);
+        let tail: string = str::substr(l, x, l.len - x);
+        let parts: string[] = str::split(text, "\n");
+        let n: i64 = parts.len;
+
+        if (n == 1) {
+            self.set_line(y, "\(head)\(text)\(tail)");
+            return (y, x + text.len);
+        }
+        self.set_line(y, "\(head)\(parts[0])");
+
+        for (let k: i64 in 1..(n - 1)) { self.insert_line(y + k, parts[k]); }
+        let last: string = parts[n - 1];
+
+        self.insert_line(y + n - 1, "\(last)\(tail)");
+        return (y + n - 1, last.len);
+    }
+
+    /// remove the text from (y1, x1) to (y2, x2) (end excluded) -> the
+    /// removed text
+    export fn cut(mut self: &Buf, y1: i64, x1: i64, y2: i64, x2: i64) -> string {
+        let first: string = self.text.get(y1);
+
+        if (y1 == y2) {
+            let gone: string = str::substr(first, x1, x2 - x1);
+
+            self.set_line(
+                y1, "\(str::substr(first, 0, x1))\(str::substr(first, x2, first.len - x2))"
+            );
+            return gone;
+        }
+        let last: string = self.text.get(y2);
+        var b: str::Builder;
+
+        b.add(str::substr(first, x1, first.len - x1));
+
+        for (let k: i64 in (y1 + 1)..y2) {
+            b.add_byte(10);
+            b.add(self.text.get(k));
+        }
+        b.add_byte(10);
+        b.add(str::substr(last, 0, x2));
+        self.set_line(y1, "\(str::substr(first, 0, x1))\(str::substr(last, x2, last.len - x2))");
+
+        for (let k: i64 in (y1 + 1)..(y2 + 1)) { self.remove_line(y1 + 1); }
+        return b.to_string();
+    }
+
+    /// the word under the cursor ("": none)
+    export fn word(mut self: &Buf) -> string {
+        let l: string = self.text.get(self.cy);
+        var a: i64 = self.cx;
+
+        if (a >= l.len) {
+            return "";
+        }
+        if (!wordy(l[a])) {
+            return "";
+        }
+
+        while (a > 0 && wordy(l[a - 1])) { a -= 1; }
+        var b: i64 = self.cx;
+
+        while (b < l.len && wordy(l[b])) { b += 1; }
+        return str::substr(l, a, b - a);
+    }
+
+    // ---- highlighting --------------------------------------------------------------
+
+    /// highlighter state at the start of line i, if the saved states reach
+    /// it (at most STEP lines from one)
+    export fn state_at(mut self: &Buf, i: i64) -> i64? {
+        let k: i64 = i / STEP;
+
+        if (k >= self.valid) {
+            return none;
+        }
+        var s: i64 = self.states[k];
+        var out: Hl[] = [];
+        let lang: string = self.ft.syntax;
+
+        for (let l: i64 in (k * STEP)..i) {
+            let t: string = self.text.get(l);
+
+            s = syntax::line(lang, &t, s, mut &out);
+            out.clear();
+        }
+        return s;
+    }
+
+    /// do the saved states reach line i?
+    export fn reaches(self: &Buf, i: i64) -> bool { return i / STEP < self.valid; }
