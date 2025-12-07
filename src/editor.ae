@@ -1060,3 +1060,117 @@ fn words_in(
             self.go(m.y, m.x, true);
         }
     }
+
+    fn insert_edit(mut self: &App, t: &string, k: &tui::Key) -> void {
+        self.b.begin();
+        match (*t) {
+            "<Esc>" | "<C-c>" | "<C-[>" => {
+                self.leave_insert();
+                return;
+            },
+            "<CR>" | "<C-j>" | "<C-m>" => {
+                let l: string = self.b.text.get(self.b.cy);
+                var ind: string = "";
+
+                if (self.cfg.autoindent) { ind = indent_of(&l); }
+                var head: string = str::substr(l, 0, self.b.cx);
+                let tail: string = str::substr(l, self.b.cx, l.len - self.b.cx);
+
+                if (str::trim(head).len == 0) { head = ""; }
+                self.b.set_line(self.b.cy, head);
+                self.b.insert_line(self.b.cy + 1, "\(ind)\(tail)");
+                self.b.cy += 1;
+                self.b.cx = ind.len;
+            },
+            "<BS>" | "<C-h>" => {
+                if (self.b.cx > 0) {
+                    let l: string = self.b.text.get(self.b.cy);
+                    let a: i64 = prev_char(&l, self.b.cx);
+
+                    self.b.cut(self.b.cy, a, self.b.cy, self.b.cx);
+                    self.b.cx = a;
+                } else if (self.b.cy > 0) {
+                    let prev: string = self.b.text.get(self.b.cy - 1);
+
+                    self.b.cut(self.b.cy - 1, prev.len, self.b.cy, 0);
+                    self.b.cy -= 1;
+                    self.b.cx = prev.len;
+                }
+            },
+            "<Del>" => {
+                let l: string = self.b.text.get(self.b.cy);
+
+                if (self.b.cx < l.len) {
+                    self.b.cut(self.b.cy, self.b.cx, self.b.cy, next_char(&l, self.b.cx));
+                } else if (self.b.cy + 1 < self.b.text.count) {
+                    self.b.cut(self.b.cy, self.b.cx, self.b.cy + 1, 0);
+                }
+            },
+            "<C-w>" => {
+                let l: string = self.b.text.get(self.b.cy);
+                var a: i64 = self.b.cx;
+
+                while (a > 0 && (l[a - 1] == ' ' || l[a - 1] == '\t')) { a -= 1; }
+                if (a > 0) {
+                    let c0: i64 = class(l[a - 1], false);
+
+                    while (a > 0 && class(l[a - 1], false) == c0) { a -= 1; }
+                }
+                self.b.cut(self.b.cy, a, self.b.cy, self.b.cx);
+                self.b.cx = a;
+            },
+            "<C-u>" => {
+                let l: string = self.b.text.get(self.b.cy);
+                let a: i64 = first_non_blank(&l);
+                var from_x: i64 = 0;
+
+                if (self.b.cx > a) { from_x = a; }
+                self.b.cut(self.b.cy, from_x, self.b.cy, self.b.cx);
+                self.b.cx = from_x;
+            },
+            "<Tab>" => {
+                if (self.cfg.expandtab) {
+                    let l: string = self.b.text.get(self.b.cy);
+                    let c: i64 = col_of(&l, self.b.cx, self.b.tabstop);
+
+                    self.insert_text(str::repeat(" ", self.b.tabstop - c % self.b.tabstop));
+                } else {
+                    self.insert_text("\t");
+                }
+                return;
+            },
+            "<Left>" => {
+                let l: string = self.b.text.get(self.b.cy);
+
+                self.b.cx = prev_char(&l, self.b.cx);
+            },
+            "<Right>" => {
+                let l: string = self.b.text.get(self.b.cy);
+
+                self.b.cx = next_char(&l, self.b.cx);
+            },
+            "<Up>" => { if (self.b.cy > 0) { self.b.cy -= 1; } },
+            "<Down>" => { if (self.b.cy + 1 < self.b.text.count) { self.b.cy += 1; } },
+            "<Home>" => { self.b.cx = 0; },
+            "<End>" => { self.b.cx = self.b.text.get(self.b.cy).len; },
+            "<C-r>" => {
+                self.insert_text(self.reg);
+                return;
+            },
+            _ => {
+                if (let c = k.typed()) {
+                    self.insert_text(str::from_char(c));
+                    return;
+                }
+                if (str::eq(*t, "<Space>")) {
+                    self.insert_text(" ");
+                    return;
+                }
+                return;
+            }
+        }
+        let l: string = self.b.text.get(self.b.cy);
+
+        self.b.clamp();
+        self.b.want = col_of(&l, self.b.cx, self.b.tabstop);
+    }
