@@ -1061,6 +1061,71 @@ fn words_in(
         }
     }
 
+    // applies operator op ("d", "c", "y", ">", "<") from the cursor to m
+    fn operate(mut self: &App, op: string, m: &Motion) -> void {
+        var y1: i64 = self.b.cy;
+        var x1: i64 = self.b.cx;
+        var y2: i64 = m.y;
+        var x2: i64 = m.x;
+
+        if (m.linewise || x2 < 0) {
+            if (y2 < y1) {
+                let t: i64 = y1;
+
+                y1 = y2;
+                y2 = t;
+            }
+            self.op_lines(op, y1, y2);
+            return;
+        }
+        if (y2 < y1 || (y2 == y1 && x2 < x1)) {
+            let ty: i64 = y1;
+            let tx: i64 = x1;
+
+            y1 = y2;
+            x1 = x2;
+            y2 = ty;
+            x2 = tx;
+        }
+        if (m.inclusive) {
+            let l: string = self.b.text.get(y2);
+
+            x2 = next_char(&l, x2);
+        }
+        if (str::eq(op, ">") || str::eq(op, "<")) {
+            self.op_lines(op, y1, y2);
+            return;
+        }
+        if (str::eq(op, "y")) {
+            self.reg = self.yank_text(y1, x1, y2, x2);
+            self.reg_lines = false;
+            self.clip(self.reg);
+            self.go(y1, x1, true);
+            return;
+        }
+        self.b.begin();
+        self.reg = self.b.cut(y1, x1, y2, x2);
+        self.reg_lines = false;
+        self.b.cy = y1;
+        self.b.cx = x1;
+        if (str::eq(op, "c")) {
+            self.mode = Mode::Insert;
+        } else {
+            self.b.commit();
+        }
+        self.go(y1, x1, true);
+    }
+
+    // text from (y1, x1) to (y2, x2), without removing it
+    fn yank_text(mut self: &App, y1: i64, x1: i64, y2: i64, x2: i64) -> string {
+        if (y1 == y2) {
+            return str::substr(self.b.text.get(y1), x1, x2 - x1);
+        }
+        var s: str::Builder;
+        let first: string = self.b.text.get(y1);
+
+        s.add(str::substr(first, x1, first.len - x1));
+
     fn insert_edit(mut self: &App, t: &string, k: &tui::Key) -> void {
         self.b.begin();
         match (*t) {
