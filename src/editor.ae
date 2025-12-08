@@ -1126,6 +1126,79 @@ fn words_in(
 
         s.add(str::substr(first, x1, first.len - x1));
 
+        for (let k: i64 in (y1 + 1)..y2) {
+            s.add_byte(10);
+            s.add(self.b.text.get(k));
+        }
+        s.add_byte(10);
+        s.add(str::substr(self.b.text.get(y2), 0, x2));
+        return s.to_string();
+    }
+
+    // applies operator op to whole lines y1..=y2
+    fn op_lines(mut self: &App, op: string, y1: i64, y2: i64) -> void {
+        var s: str::Builder;
+
+        for (let k: i64 in y1..(y2 + 1)) {
+            s.add(self.b.text.get(k));
+            s.add_byte(10);
+        }
+        if (str::eq(op, "y")) {
+            self.reg = s.to_string();
+            self.reg_lines = true;
+            self.clip(self.reg);
+            if (y2 > y1) { self.say("\(y2 - y1 + 1) lines yanked"); }
+            return;
+        }
+        self.b.begin();
+        if (str::eq(op, ">") || str::eq(op, "<")) {
+            var unit: string = "\t";
+
+            if (self.cfg.expandtab) { unit = str::repeat(" ", self.b.tabstop); }
+
+            for (let k: i64 in y1..(y2 + 1)) {
+                let l: string = self.b.text.get(k);
+
+                if (str::eq(op, ">")) {
+                    if (l.len > 0) { self.b.set_line(k, "\(unit)\(l)"); }
+                } else {
+                    var cut: i64 = 0;
+
+                    while (cut < l.len && cut < self.b.tabstop && l[cut] == ' ') { cut += 1; }
+                    if (cut == 0 && l.len > 0 && l[0] == '\t') { cut = 1; }
+                    self.b.set_line(k, str::substr(l, cut, l.len - cut));
+                }
+            }
+            self.b.commit();
+            let l: string = self.b.text.get(y1);
+
+            self.go(y1, first_non_blank(&l), true);
+            return;
+        }
+        self.reg = s.to_string();
+        self.reg_lines = true;
+        if (str::eq(op, "c")) {
+            let ind: string = indent_of(&self.b.text.get(y1));
+
+            for (let k: i64 in (y1 + 1)..(y2 + 1)) { self.b.remove_line(y1 + 1); }
+            self.b.set_line(y1, ind);
+            self.b.cy = y1;
+            self.b.cx = ind.len;
+            self.mode = Mode::Insert;
+            return;
+        }
+
+        for (let k: i64 in y1..(y2 + 1)) { self.b.remove_line(y1); }
+        self.b.commit();
+        var ny: i64 = y1;
+
+        if (ny >= self.b.text.count) { ny = self.b.text.count - 1; }
+        let l: string = self.b.text.get(ny);
+
+        self.go(ny, first_non_blank(&l), true);
+        if (y2 - y1 + 1 >= 3) { self.say("\(y2 - y1 + 1) fewer lines"); }
+    }
+
     fn insert_edit(mut self: &App, t: &string, k: &tui::Key) -> void {
         self.b.begin();
         match (*t) {
