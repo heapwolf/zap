@@ -1199,6 +1199,231 @@ fn words_in(
         if (y2 - y1 + 1 >= 3) { self.say("\(y2 - y1 + 1) fewer lines"); }
     }
 
+    // puts the register after the cursor (after: p) or before it (P)
+    fn put_reg(mut self: &App, after: bool, count: i64) -> void {
+        if (self.reg.len == 0) {
+            return;
+        }
+        var c: i64 = count;
+
+        if (c < 1) { c = 1; }
+        let text: string = str::repeat(self.reg, c);
+        let lines_mode: bool = self.reg_lines;
+
+        self.b.begin();
+        if (lines_mode) {
+            var lines: string[] = str::split(text, "\n");
+
+            if (lines.len > 0 && lines[lines.len - 1].len == 0) { lines.pop(); }
+            var at: i64 = self.b.cy;
+
+            if (after) { at += 1; }
+
+            for (let k: i64, let l: string in &lines) { self.b.insert_line(at + k, l); }
+            self.b.commit();
+            let l: string = self.b.text.get(at);
+
+            self.go(at, first_non_blank(&l), true);
+            return;
+        }
+        let l: string = self.b.text.get(self.b.cy);
+        var x: i64 = self.b.cx;
+
+        if (after && l.len > 0) { x = next_char(&l, x); }
+        let end: (i64, i64) = self.b.put(self.b.cy, x, text);
+
+        self.b.commit();
+        let el: string = self.b.text.get(end.0);
+
+        self.go(end.0, prev_char(&el, end.1), true);
+    }
+
+    // a normal-mode command: toks so far -> 0 needs more keys, 1 done, 2 not one
+    fn normal_cmd(mut self: &App, toks: &string[]) -> i64 {
+        let n: i64 = toks.len;
+        let (count, i) = read_count(toks, 0);
+
+        if (i >= n) {
+            return 0;
+        }
+        let t: string = toks[i];
+        var c1: i64 = count;
+
+        if (c1 < 1) { c1 = 1; }
+        // operators
+        if (str::eq(t, "d") || str::eq(t, "c") || str::eq(t, "y") || str::eq(t, ">") ||
+            str::eq(t, "<lt>")) {
+            var op: string = t;
+
+            if (str::eq(op, "<lt>")) { op = "<"; }
+            let (count2, j) = read_count(toks, i + 1);
+
+            if (j >= n) {
+                return 0;
+            }
+            var total: i64 = count;
+
+            if (count2 > 0) {
+                if (total < 1) { total = 1; }
+                total = total * count2;
+            }
+            if (str::eq(toks[j], t)) {
+                // dd, cc, yy, >>, <<: whole lines
+                var tl: i64 = total;
+
+                if (tl < 1) { tl = 1; }
+                let y1: i64 = self.b.cy;
+                var y2: i64 = y1 + tl - 1;
+                let last: i64 = self.b.text.count - 1;
+
+                if (y2 > last) { y2 = last; }
+                self.op_lines(op, y1, y2);
+                return 1;
+            }
+            // iw aw iW aW: the word under the cursor (and the spaces after it)
+            if (str::eq(toks[j], "i") || str::eq(toks[j], "a")) {
+                if (j + 1 >= n) {
+                    return 0;
+                }
+                let o: string = toks[j + 1];
+
+                if (!str::eq(o, "w") && !str::eq(o, "W")) {
+                    return 2;
+                }
+                let y: i64 = self.b.cy;
+                let (wa, we) = self.word_at(y, self.b.cx, str::eq(o, "W"), str::eq(toks[j], "a"));
+
+                if (we <= wa) {
+                    return 1;
+                }
+                self.b.cx = wa;
+                self.operate(op, &Motion { state: 1, y: y, x: we, used: 2 });
+                return 1;
+            }
+            // cw acts as ce (to the word's end, not the next word's start)
+            var toks2: string[] = std::copy(*toks);
+
+            if (str::eq(op, "c") && (str::eq(toks[j], "w") || str::eq(toks[j], "W"))) {
+                let l: string = self.b.text.get(self.b.cy);
+                let x: i64 = self.b.cx;
+
+                if (x < l.len && class(l[x], false) != 0) {
+                    if (str::eq(toks[j], "w")) { toks2[j] = "e"; } else { toks2[j] = "E"; }
+                }
+            }
+            let m: Motion = self.motion(&toks2, j, total);
+
+            if (m.state != 1) {
+                return m.state;
+            }
+            self.operate(op, &m);
+            return 1;
+        }
+        let m: Motion = self.motion(toks, i, count);
+
+        if (m.state == 0) {
+            return 0;
+        }
+        if (m.state == 1) {
+            self.move_to(&m);
+            return 1;
+        }
+        let rest: i64 = n - i - 1;
+
+        match (t) {
+            "i" | "<Insert>" => { self.start_insert(); },
+            "a" => {
+                let l: string = self.b.text.get(self.b.cy);
+
+                if (l.len > 0) { self.b.cx = next_char(&l, self.b.cx); }
+                self.start_insert();
+            },
+            "I" => {
+                let l: string = self.b.text.get(self.b.cy);
+
+                self.b.cx = first_non_blank(&l);
+                self.start_insert();
+            },
+            "A" => {
+                self.b.cx = self.b.text.get(self.b.cy).len;
+                self.start_insert();
+            },
+            "o" | "O" => {
+                self.b.begin();
+                var ind: string = "";
+
+                if (self.cfg.autoindent) { ind = indent_of(&self.b.text.get(self.b.cy)); }
+                var at: i64 = self.b.cy + 1;
+
+                if (str::eq(t, "O")) { at = self.b.cy; }
+                self.b.insert_line(at, ind);
+                self.b.cy = at;
+                self.b.cx = ind.len;
+                self.mode = Mode::Insert;
+            },
+            "x" | "<Del>" | "X" => {
+                let l: string = self.b.text.get(self.b.cy);
+
+                if (l.len == 0) {
+                    return 1;
+                }
+                var a: i64 = self.b.cx;
+                var e: i64 = self.b.cx;
+
+                for (let k: i64 in 0..c1) {
+                    if (str::eq(t, "X")) {
+                        a = prev_char(&l, a);
+                    } else if (e < l.len) {
+                        e = next_char(&l, e);
+                    }
+                }
+                if (a == e) {
+                    return 1;
+                }
+                self.b.begin();
+                self.reg = self.b.cut(self.b.cy, a, self.b.cy, e);
+                self.reg_lines = false;
+                self.b.commit();
+                self.b.cx = a;
+            },
+            "s" => {
+                let l: string = self.b.text.get(self.b.cy);
+                var e: i64 = self.b.cx;
+
+                for (let k: i64 in 0..c1) {
+                    if (e < l.len) { e = next_char(&l, e); }
+                }
+                self.b.begin();
+                self.reg = self.b.cut(self.b.cy, self.b.cx, self.b.cy, e);
+                self.mode = Mode::Insert;
+            },
+            "S" => {
+                let y: i64 = self.b.cy;
+
+                self.op_lines("c", y, y);
+            },
+            "D" | "C" => {
+                let l: string = self.b.text.get(self.b.cy);
+
+                self.b.begin();
+                self.reg = self.b.cut(self.b.cy, self.b.cx, self.b.cy, l.len);
+                self.reg_lines = false;
+                if (str::eq(t, "C")) {
+                    self.mode = Mode::Insert;
+                } else {
+                    self.b.commit();
+                }
+            },
+            "Y" => {
+                let y: i64 = self.b.cy;
+
+                self.op_lines("y", y, y);
+            },
+            "p" => { self.put_reg(true, count); },
+            "P" => { self.put_reg(false, count); },
+            "J" => {
+                let y: i64 = self.b.cy;
+
     fn insert_edit(mut self: &App, t: &string, k: &tui::Key) -> void {
         self.b.begin();
         match (*t) {
