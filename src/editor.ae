@@ -1424,6 +1424,239 @@ fn words_in(
             "J" => {
                 let y: i64 = self.b.cy;
 
+                self.join_lines(y, c1);
+            },
+            "r" => {
+                if (rest < 1) {
+                    return 0;
+                }
+                var ch: string = toks[i + 1];
+
+                if (str::eq(ch, "<Space>")) { ch = " "; }
+                if (str::eq(ch, "<lt>")) { ch = "<"; }
+                if (str::eq(ch, "<Esc>")) {
+                    return 1;
+                }
+                if (str::starts_with(ch, "<") && ch.len > 1) {
+                    return 2;
+                }
+                let l: string = self.b.text.get(self.b.cy);
+
+                if (self.b.cx >= l.len) {
+                    return 1;
+                }
+                var e: i64 = self.b.cx;
+
+                for (let k: i64 in 0..c1) {
+                    if (e < l.len) { e = next_char(&l, e); }
+                }
+                let x: i64 = self.b.cx;
+
+                self.b.begin();
+                self.b.cut(self.b.cy, x, self.b.cy, e);
+                self.b.put(self.b.cy, x, str::repeat(ch, c1));
+                self.b.commit();
+                self.b.cx = x;
+            },
+            "~" => {
+                let l: string = self.b.text.get(self.b.cy);
+
+                if (self.b.cx >= l.len) {
+                    return 1;
+                }
+                let e: i64 = next_char(&l, self.b.cx);
+                let ch: string = str::substr(l, self.b.cx, e - self.b.cx);
+                var sw: string = str::to_upper(ch);
+
+                if (str::eq(sw, ch)) { sw = str::to_lower(ch); }
+                self.b.begin();
+                self.b.set_line(
+                    self.b.cy, "\(str::substr(l, 0, self.b.cx))\(sw)\(str::substr(l, e, l.len - e))"
+                );
+                self.b.commit();
+                if (e < l.len) { self.b.cx = e; }
+            },
+            "u" => {
+                for (let k: i64 in 0..c1) {
+                    if (!self.b.undo_last()) {
+                        self.say("Already at oldest change");
+                        break;
+                    }
+                }
+            },
+            "<C-r>" => {
+                for (let k: i64 in 0..c1) {
+                    if (!self.b.redo_last()) {
+                        self.say("Already at newest change");
+                        break;
+                    }
+                }
+            },
+            "n" => { self.search_next(self.search_fwd); },
+            "N" => { self.search_next(!self.search_fwd); },
+            "*" | "#" => {
+                let w: string = self.b.word();
+
+                if (w.len == 0) {
+                    return 1;
+                }
+                self.last_search = w;
+                self.search_fwd = str::eq(t, "*");
+                self.set_matcher(w);
+                self.search_next(self.search_fwd);
+            },
+            ":" => { self.start_cmd(":"); },
+            "/" => { self.start_cmd("/"); },
+            "?" => { self.start_cmd("?"); },
+            "<C-d>" | "<C-u>" | "<C-f>" | "<C-b>" | "<PageDown>" | "<PageUp>" => {
+                var by: i64 = self.edit_h / 2;
+
+                if (str::eq(t, "<C-f>") || str::eq(t, "<C-b>") || str::eq(t, "<PageDown>") ||
+                    str::eq(t, "<PageUp>")) {
+                    by = self.edit_h - 2;
+                }
+                if (by < 1) { by = 1; }
+                if (str::eq(t, "<C-u>") || str::eq(t, "<C-b>") || str::eq(t, "<PageUp>")) {
+                    by = 0 - by;
+                }
+                self.b.top += by;
+                if (self.b.top < 0) { self.b.top = 0; }
+                if (self.b.top > self.b.text.count - 1) { self.b.top = self.b.text.count - 1; }
+                let y: i64 = self.b.cy + by;
+
+                self.go_line(y);
+            },
+            "<C-e>" | "<C-y>" => {
+                var by: i64 = c1;
+
+                if (str::eq(t, "<C-y>")) { by = 0 - c1; }
+                self.b.top += by;
+                if (self.b.top < 0) { self.b.top = 0; }
+                if (self.b.top > self.b.text.count - 1) { self.b.top = self.b.text.count - 1; }
+                var y: i64 = self.b.cy;
+
+                if (y < self.b.top) { y = self.b.top; }
+                if (y >= self.b.top + self.edit_h) { y = self.b.top + self.edit_h - 1; }
+                self.go_line(y);
+            },
+            "z" => {
+                if (rest < 1) {
+                    return 0;
+                }
+                let z: string = toks[i + 1];
+
+                if (str::eq(z, "z") || str::eq(z, ".")) {
+                    self.b.top = self.b.cy - self.edit_h / 2;
+                }
+                else if (str::eq(z, "t") || str::eq(z, "<CR>")) { self.b.top = self.b.cy; }
+                else if (str::eq(z, "b") || str::eq(z, "-")) {
+                    self.b.top = self.b.cy - self.edit_h + 1;
+                }
+                else {
+                    return 2;
+                }
+                if (self.b.top < 0) { self.b.top = 0; }
+            },
+            "Z" => {
+                if (rest < 1) {
+                    return 0;
+                }
+                if (str::eq(toks[i + 1], "Z")) { self.ex("x"); }
+                else if (str::eq(toks[i + 1], "Q")) { self.ex("q!"); }
+                else {
+                    return 2;
+                }
+            },
+            "<C-w>" => {
+                if (rest < 1) {
+                    return 0;
+                }
+                let w: string = toks[i + 1];
+
+                if (str::eq(w, "h") || str::eq(w, "w") || str::eq(w, "<C-w>") ||
+                    str::eq(w, "<C-h>") ||
+                    str::eq(w, "p")) {
+                    self.focus_on_tree();
+                } else if (str::eq(w, "l") || str::eq(w, "<C-l>")) {
+                    return 1;
+                } else if (str::eq(w, ">") || str::eq(w, "<lt>")) {
+                    var d: i64 = c1;
+
+                    if (str::eq(w, "<lt>")) { d = 0 - c1; }
+                    self.split.by(d);
+                } else {
+                    return 2;
+                }
+            },
+            "<C-g>" => { self.file_info(); },
+            "<C-o>" | "<C-^>" => { if (self.alt >= 0) { self.switch_id(self.alt); } },
+            "<Esc>" => {},
+            "<CR>" | "+" => {
+                let y: i64 = self.b.cy + c1;
+
+                if (y < self.b.text.count) {
+                    let l: string = self.b.text.get(y);
+
+                    self.go(y, first_non_blank(&l), true);
+                }
+            },
+            "-" => {
+                let y: i64 = self.b.cy - c1;
+
+                if (y >= 0) {
+                    let l: string = self.b.text.get(y);
+
+                    self.go(y, first_non_blank(&l), true);
+                }
+            },
+            "v" => { self.start_visual(1); },
+            "V" => { self.start_visual(2); },
+            "q" => {
+                if (!self.b.readonly) {
+                    return 2;
+                }
+                self.ex("bd");
+            },
+            "<C-v>" => { self.start_visual(3); },
+            "g" => {
+                if (rest < 1) {
+                    return 0;
+                }
+                let g: string = toks[i + 1];
+
+                if (str::eq(g, "-")) {
+                    if (!self.b.go_to(self.b.hist.at - c1)) {
+                        self.say("Already at oldest change");
+                    }
+                    else { self.say_state(); }
+                } else if (str::eq(g, "+")) {
+                    if (!self.b.go_to(self.b.hist.at + c1)) {
+                        self.say("Already at newest change");
+                    }
+                    else { self.say_state(); }
+                } else if (str::eq(g, "v")) {
+                    if (self.gv.len < 5) {
+                        return 1;
+                    }
+                    let last: i64 = self.b.text.count - 1;
+                    var vy: i64 = self.gv[1];
+                    var cy: i64 = self.gv[3];
+
+                    if (vy > last) { vy = last; }
+                    if (cy > last) { cy = last; }
+                    self.start_visual(self.gv[0]);
+                    self.vy = vy;
+                    self.vx = self.gv[2];
+                    self.go(cy, self.gv[4], true);
+                } else {
+                    return 2;
+                }
+            },
+            _ => { return 2; }
+        }
+        return 1;
+    }
+
     fn insert_edit(mut self: &App, t: &string, k: &tui::Key) -> void {
         self.b.begin();
         match (*t) {
