@@ -326,6 +326,112 @@ fn words_in(
     }
 }
 
+// sorts xs (insertion sort: completions are few)
+fn sort_strings(mut xs: &string[]) -> void {
+    let n: i64 = xs.len;
+
+    for (let i: i64 in 1..n) {
+        var j: i64 = i;
+
+        while (j > 0 && str::cmp(xs[j], xs[j - 1]) < 0) {
+            let a: string = xs[j];
+
+            xs[j] = xs[j - 1];
+            xs[j - 1] = a;
+            j -= 1;
+        }
+    }
+}
+
+// "secs seconds ago", roughly
+fn ago(secs: i64) -> string {
+    if (secs < 0) {
+        return "just now";
+    }
+    if (secs < 60) {
+        return "\(secs) seconds ago";
+    }
+    if (secs < 3600) {
+        return "\(secs / 60) minutes ago";
+    }
+    if (secs < 86400) {
+        return "\(secs / 3600) hours ago";
+    }
+    return "\(secs / 86400) days ago";
+}
+
+// 0 space, 1 word char, 2 punctuation (big: any non-space is 1)
+fn class(b: u8, big: bool) -> i64 {
+    if (b == ' ' || b == '\t') {
+        return 0;
+    }
+    if (big || wordy(b)) {
+        return 1;
+    }
+    return 2;
+}
+
+/// display name of path p (relative to cwd when inside it)
+export fn short_name(cwd: string, p: string) -> string {
+    if (path::is_within(cwd, p) && !str::eq(path::clean(cwd), path::clean(p))) {
+        match (path::rel(cwd, p)) {
+            r => { return r; },
+            e: path::BadPath => {}
+        }
+    }
+    return p;
+}
+
+/// a buffer, as lists show it
+export struct BufInfo {
+    export id: i64;
+    export name: string;
+    export path: string;
+    export modified: bool;
+    export scratch: bool;
+    export line: i64;
+}
+
+fn info_of(b: &Buf) -> BufInfo {
+    var nm: string = b.name;
+
+    if (nm.len == 0) { nm = "[No Name]"; }
+    return BufInfo {
+        id: b.id, name: nm, path: b.path, modified: b.modified, scratch: b.scratch, line: b.cy + 1
+    };
+}
+
+// a motion's result: target, and how an operator takes text to it
+struct Motion {
+    state: i64;             // 0 needs more keys, 1 done, 2 not a motion
+    y: i64 = 0;
+    x: i64 = 0;
+    linewise: bool = false;
+    inclusive: bool = false;
+    used: i64 = 0;              // tokens used
+}
+
+impl App {
+    // ---- buffers -------------------------------------------------------------------
+
+    /// shows a message on the command line
+    export fn say(mut self: &App, m: string) -> void {
+        self.msg = m;
+        self.msg_error = false;
+        self.msg_until = time::since_epoch() / 1ms + MSG_MS;
+    }
+
+    /// shows an error, like say (a little longer)
+    export fn fail_msg(mut self: &App, m: string) -> void {
+        self.msg = m;
+        self.msg_error = true;
+        self.msg_until = time::since_epoch() / 1ms + ERROR_MS;
+    }
+
+    /// does the message show in the status line, in the file name's place?
+    /// (no command-line row: it comes and goes without moving the status line)
+    export fn msg_in_status(self: &App) -> bool { return self.cfg.cmdheight == 0; }
+
     /// makes a scratch buffer name with text current (replacing one of that name)
     export fn show_scratch(mut self: &App, name: string, text: string) -> void {
         if (self.b.scratch && str::eq(self.b.name, name)) {
