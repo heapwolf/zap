@@ -318,3 +318,111 @@ impl MemLine {
         self.loaded.push(k);
         self.trim(k);
     }
+
+    /// remove line i (later lines move up)
+    export fn remove(mut self: &MemLine, i: i64) -> void {
+        let k: i64 = self.locate(i);
+
+        self.load(k);
+        let j: i64 = i - self.hint_start;
+        let n: i64 = self.chunks[k].lines.len;
+
+        for (let m: i64 in j..(n - 1)) { self.chunks[k].lines[m] = self.chunks[k].lines[m + 1]; }
+        self.chunks[k].lines.pop();
+        self.chunks[k].count -= 1;
+        self.chunks[k].dirty = true;
+        self.count -= 1;
+        if (self.chunks[k].count == 0 && self.chunks.len > 1) { self.drop_chunk(k); }
+    }
+
+    // split chunk k (in memory, too long) in two
+    fn split(mut self: &MemLine, k: i64) -> void {
+        let n: i64 = self.chunks[k].lines.len;
+        let half: i64 = n / 2;
+        var tail: string[] = [];
+
+        for (let m: i64 in half..n) { tail.push(self.chunks[k].lines[m]); }
+
+        while (self.chunks[k].lines.len > half) { self.chunks[k].lines.pop(); }
+        self.chunks[k].count = half;
+        var rest: Chunk[] = [];
+
+        while (self.chunks.len > k + 1) { rest.push(self.chunks.pop()); }
+        self.clock += 1;
+        self.chunks.push(Chunk {
+            place: Where::Memory, count: n - half, lines: tail, loaded: true, dirty: true,
+            used: self.clock
+        });
+
+        while (rest.len > 0) { self.chunks.push(rest.pop()); }
+
+        for (let j: i64 in 0..self.loaded.len) {
+            if (self.loaded[j] > k) { self.loaded[j] += 1; }
+        }
+        self.loaded.push(k + 1);
+        self.trim(k);
+    }
+
+    // remove chunk k (empty) from the list
+    fn drop_chunk(mut self: &MemLine, k: i64) -> void {
+        var rest: Chunk[] = [];
+
+        while (self.chunks.len > k + 1) { rest.push(self.chunks.pop()); }
+        self.chunks.pop();
+
+        while (rest.len > 0) { self.chunks.push(rest.pop()); }
+        var j: i64 = 0;
+
+        while (j < self.loaded.len) {
+            if (self.loaded[j] == k) {
+                self.drop_loaded(j);
+                continue;
+            }
+            if (self.loaded[j] > k) { self.loaded[j] -= 1; }
+            j += 1;
+        }
+        self.hint = 0;
+        self.hint_start = 0;
+    }
+
+    // chunk k's lines as in the file (with newlines; the last line's only if
+    // the file ends in one), without loading it into memory
+    fn chunk_text(mut self: &MemLine, k: i64, last: bool) -> string {
+        if (!self.chunks[k].loaded && self.chunks[k].place == Where::File) {
+            match (fs::read_at(self.file, self.chunks[k].off, self.chunks[k].size)) {
+                t => {
+                    if (t.len != self.chunks[k].size) { self.broken = "\(self.file) changed"; }
+                    return t;
+                },
+                e: fs::NotFound => { self.broken = "\(self.file) is gone"; },
+                e2: fs::PermissionDenied => { self.broken = "\(self.file) cannot be read"; },
+                e3: fs::IsADirectory => { self.broken = "\(self.file) is a directory"; },
+                e4: fs::IoError => { self.broken = "\(self.file) could not be read"; }
+            }
+            return "";
+        }
+        var lines: string[] = [];
+
+        if (self.chunks[k].loaded) {
+            lines = std::copy(self.chunks[k].lines);
+        } else {
+            match (fs::read_at(self.swap, self.chunks[k].off, self.chunks[k].size)) {
+                t => { lines = split_lines(t, false); },
+                e: fs::NotFound => { self.broken = "the swap file is gone"; },
+                e2: fs::PermissionDenied => { self.broken = "the swap file cannot be read"; },
+                e3: fs::IsADirectory => { self.broken = "the swap file is a directory"; },
+                e4: fs::IoError => { self.broken = "the swap file could not be read"; }
+            }
+        }
+        var b: str::Builder;
+        let n: i64 = lines.len;
+
+        for (let i: i64, let l: string in &lines) {
+            b.add(l);
+            if (i < n - 1 || !last || self.eol) {
+                if (self.crlf) { b.add_byte(13); }
+                b.add_byte(10);
+            }
+        }
+        return b.to_string();
+    }
