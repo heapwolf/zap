@@ -426,3 +426,109 @@ impl MemLine {
         }
         return b.to_string();
     }
+
+    /// write every line to file p -> bytes written. The text goes to a new
+    /// file first (beside p, or in zap's state directory if p's directory
+    /// cannot take one), then over p in place: p keeps its inode, mode,
+    /// owner and links (a symlink's target is written). If p changed on disk
+    /// since it was read, it is not written unless force. If copying over p
+    /// fails, the new file stays and the failure names it. adopt: p becomes
+    /// this buffer's file and every chunk comes from it (none from memory or
+    /// the swap file)
+    export fn write(mut self: &MemLine, p: string, adopt: bool, force: bool) -> i64 |
+        fs::NotFound | fs::PermissionDenied | fs::IsADirectory | fs::IoError | ChangedOnDisk {
+        if (self.broken.len > 0) { fail fs::IoError { path: self.broken }; }
+        var there: bool = false;
+
+        match (fs::info(p)) {
+            i => {
+                if (i.kind == fs::Kind::Dir) { fail fs::IsADirectory { path: p }; }
+                there = true;
+            },
+            e: fs::NotFound => {}, e2: fs::PermissionDenied => { fail e2; },
+            e3: fs::IoError => { fail e3; }
+        }
+        if (there && !force && str::eq(p, self.file) && (self.stamp_time / 1ns) != 0 &&
+            self.changed_on_disk()) {
+            fail ChangedOnDisk { path: p };
+        }
+        // write the whole new text somewhere first
+        var tmp: string = "\(p).zap-new";
+
+        match (fs::write_text(tmp, "", fs::Write {})) {
+            v => {},
+            e: fs::NotFound => { tmp = stage_path(p); },
+            e2: fs::PermissionDenied => { tmp = stage_path(p); },
+            e3: fs::IsADirectory => { tmp = stage_path(p); },
+            e4: fs::IoError => { tmp = stage_path(p); }
+        }
+        fs::write_text(tmp, "", fs::Write {})?;
+        var offs: i64[] = [];
+        var sizes: i64[] = [];
+        var at: i64 = 0;
+        var b: str::Builder;
+        let n: i64 = self.chunks.len;
+
+        for (let k: i64 in 0..n) {
+            let t: string = self.chunk_text(k, k == n - 1);
+
+            offs.push(at);
+            sizes.push(t.len);
+            at += t.len;
+            b.add(t);
+            if (b.len() >= 262144 || k == n - 1) {
+                fs::write_text(tmp, b.to_string(), fs::Write { append: true })?;
+                b.clear();
+            }
+        }
+        if (self.broken.len > 0) {
+            remove_quietly(tmp);
+            fail fs::IoError { path: self.broken };
+        }
+        // then over p: a new file is renamed into place; an existing one is
+        // overwritten block by block
+        var placed: bool = false;
+
+        if (!there) {
+            match (fs::rename(tmp, p)) {
+                v => { placed = true; },
+                e: fs::NotFound => {}, e2: fs::PermissionDenied => {}, e3: fs::IsADirectory => {},
+                e4: fs::NotEmpty => {}, e5: fs::IoError => {}
+            }
+        }
+        if (!placed) {
+            if (!copy_over(tmp, p, at)) {
+                fail fs::IoError { path: "\(p) (its new text is in \(tmp))" };
+            }
+            remove_quietly(tmp);
+        }
+        if (adopt) {
+            self.file = p;
+
+            for (let k: i64 in 0..n) {
+                self.chunks[k].place = Where::File;
+                self.chunks[k].off = offs[k];
+                self.chunks[k].size = sizes[k];
+                self.chunks[k].dirty = false;
+            }
+            match (fs::info(p)) {
+                i => {
+                    self.stamp = i.size;
+                    self.stamp_time = i.modified;
+                },
+                e: fs::NotFound => {}, e2: fs::PermissionDenied => {}, e3: fs::IoError => {}
+            }
+            self.drop_swap();
+        }
+        return at;
+    }
+
+    // remove the swap file (nothing comes from it any more)
+    fn drop_swap(mut self: &MemLine) -> void {
+        if (self.swap.len == 0) {
+            return;
+        }
+        remove_quietly(self.swap);
+        self.swap = "";
+        self.swap_size = 0;
+    }
