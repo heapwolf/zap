@@ -1876,3 +1876,51 @@ impl App {
         self.b.clamp();
         self.b.want = col_of(&l, self.b.cx, self.b.tabstop);
     }
+
+/// the running job's next output, or its end (cancel-safe: a select that
+/// drops it loses nothing)
+export async fn job_read(mut j: &Job) -> JobRead {
+    let c: &j::&process::Child = mut &j.child[0];
+
+    match (await c.stdout.read(65536)) {
+        data => {
+            if (data.len > 0) {
+                return JobRead { data: data };
+            }
+        },
+        e: process::IoError => {}
+    }
+    match (await c.wait()) {
+        ex => {
+            c.close();
+            var code: i64 = ex.code;
+
+            if (ex.signal != 0) { code = 128 + ex.signal; }
+            return JobRead { done: true, code: code };
+        },
+        e: process::ProcError => {
+            c.close();
+            return JobRead { done: true, code: -1 };
+        }
+    }
+    return JobRead { done: true, code: -1 };
+}
+
+// writes b (to p; "": its own file; force: even if changed on disk), with
+// its undo history if keep -> bytes written, and the error ("": none)
+fn save_buf(mut b: &Buf, p: string, force: bool, keep: bool) -> (i64, string) {
+    match (b.save(p, force)) {
+        n => {
+            if (keep) { b.keep_history(); }
+            return (n, "");
+        },
+        e: fs::NotFound => { return (0, "E212: Can't open file for writing: \(e.path)"); },
+        e2: fs::PermissionDenied => { return (0, "E212: permission denied: \(e2.path)"); },
+        e3: fs::IsADirectory => { return (0, "E502: is a directory: \(e3.path)"); },
+        e4: fs::IoError => { return (0, "E667: write failed: \(e4.path)"); },
+        e5: ChangedOnDisk => {
+            return (0, "E949: \(b.name) changed since it was read (:w! to write anyway)");
+        }
+    }
+    return (0, "");
+}
