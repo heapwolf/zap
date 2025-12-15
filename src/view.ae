@@ -147,6 +147,88 @@ let LOGO: string[] = [
 ];
 let LOGO_LINES: i64 = 4;
 
+// the intro text (like nvim's: name and version, then what to type)
+fn intro_lines(s: &App) -> tui::Span[][] {
+    let lk: &s::&Look = &s.look;
+    let accent: tui::Style = std::copy(lk.syn[10]);          // the heading face
+    var title: tui::Style = tui::Style { bold: true };
+    var dim: tui::Style = tui::Style { dim: true };
+    var out: tui::Span[][] = [];
+
+    for (let l: string in LOGO) { out.push([tui::span(l, std::copy(accent))]); }
+    out.push([]);
+    out.push([tui::span("ZAP v\(editor::VERSION)", title)]);
+    out.push([]);
+    out.push([tui::span("zap is a terminal editor written in Aela", std::copy(dim))]);
+    out.push([tui::span("its add-ins speak to aec, the Aela compiler", std::copy(dim))]);
+    out.push([]);
+    let rows: string[] = [
+        ":help<Enter>", "for help", "<C-k>", "for the palette (files, grep, symbols)",
+        "<C-t>", "to show or hide the tree", ":config<Enter>", "to configure zap",
+        ":q<Enter>", "to exit"
+    ];
+    var k: i64 = 0;
+
+    while (k + 1 < rows.len) {
+        out.push([
+            tui::plain("type  "), tui::span(str::pad_end(rows[k], 16, ' '), std::copy(accent)),
+            tui::plain(str::pad_end(rows[k + 1], 40, ' '))
+        ]);
+        k += 2;
+    }
+    return out;
+}
+
+// ---- the status line ------------------------------------------------------------------
+
+// a separator glyph between two segments: fg the left one's background,
+// bg the right one's
+fn sep(glyph: string, left: &tui::Style, right: &tui::Style) -> tui::Span {
+    return tui::span(glyph, tui::Style { fg: std::copy(left.bg), bg: std::copy(right.bg) });
+}
+
+fn status(s: &App) -> Node(App) {
+    let lk: &s::&Look = &s.look;
+    var mode_style: tui::Style = std::copy(lk.mode_normal);
+
+    if (s.mode == Mode::Insert) { mode_style = std::copy(lk.mode_insert); }
+    if (s.mode == Mode::Command || s.mode == Mode::Search) {
+        mode_style = std::copy(lk.mode_command);
+    }
+    if (s.focus_tree && s.mode == Mode::Normal) { mode_style = std::copy(lk.mode_tree); }
+    if (s.mode == Mode::Visual) { mode_style = std::copy(lk.mode_visual); }
+    let icons: bool = s.cfg.icons;
+    var hard_r: string = "";
+    var thin_l: string = "";
+    var hard_l: string = "";
+
+    if (!icons) {
+        hard_r = " ";
+        thin_l = "|";
+        hard_l = " ";
+    }
+    var name: string = "[No Name]";
+
+    if (s.b.name.len > 0) { name = path::base(s.b.name); }
+    if (s.b.modified) { name = "\(name) [+]"; }
+    if (s.b.text.broken.len > 0) { name = "\(name) [! \(s.b.text.broken)]"; }
+    var left: tui::Span[] = [
+        tui::span(" \(s.mode_name()) ", std::copy(mode_style)),
+        sep(hard_r, &mode_style, &lk.status)
+    ];
+    // (a temporary message replaces the file name)
+    let showing: bool = s.msg.len > 0 && s.msg_in_status();
+
+    if (showing) {
+        left.push(tui::plain(""));              // (filled in once the right side is known)
+    } else {
+        left.push(tui::span(" \(name)", std::copy(lk.status_file)));
+    }
+    if (s.pending.len > 0) {
+        left.push(tui::span("  \(str::join(&s.pending, ""))", std::copy(lk.status_info)));
+    }
+    var right: tui::Span[] = [];
+
 // ---- the whole screen ----------------------------------------------------------------
 
 /// app's frame: paints what prepare read
