@@ -229,6 +229,85 @@ fn status(s: &App) -> Node(App) {
     }
     var right: tui::Span[] = [];
 
+    if (s.busy()) {
+        let frames: string[] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let j: &s::&editor::Job = &s.jobs[0];
+        let k: i64 = (j.started.elapsed() / 100ms) % 10;
+
+        right.push(tui::span("\(frames[k]) \(j.name)  ", std::copy(lk.status_info)));
+    }
+    if (s.b.diags.len > 0) {
+        right.push(tui::span("E\(s.b.diags.len)  ", std::copy(lk.error)));
+    }
+    var ff: string = "unix";
+
+    if (s.b.text.crlf) { ff = "dos"; }
+    if (icons) {
+        ff = "";
+        if (s.b.text.crlf) { ff = ""; }
+    }
+    var ft: string = s.b.ft.name;
+
+    if (icons && s.b.ft.icon.len > 0) { ft = "\(s.b.ft.icon) \(ft)"; }
+    var count: i64 = s.b.text.count;
+    var at: i64 = s.b.cy;
+    var place: string = "\(s.b.cy + 1):\(s.b.cx + 1)";
+
+    if (s.sheet_on()) {
+        let sh: &s::&sheetm::Sheet = &s.b.sheet[0];
+
+        count = sh.rows.len;
+        at = sh.r;
+        place = sheetm::cell_name(sh.r, sh.c);
+    }
+    var pct: string = "\((at + 1) * 100 / count)%";
+
+    if (at == 0) { pct = "Top"; }
+    if (at == count - 1 && count > 1) { pct = "Bot"; }
+    let info: tui::Style = std::copy(lk.status_info);
+
+    right.push(tui::span("utf-8 ", std::copy(info)));
+    right.push(tui::span(thin_l, std::copy(info)));
+    right.push(tui::span(" \(ff) ", std::copy(info)));
+    right.push(tui::span(thin_l, std::copy(info)));
+    right.push(tui::span(" \(ft) ", std::copy(info)));
+    right.push(tui::span(thin_l, std::copy(info)));
+    right.push(tui::span(" \(pct) ", std::copy(info)));
+    right.push(sep(hard_l, &lk.status, &lk.status_end));
+    right.push(tui::span(" \(place) ", std::copy(lk.status_end)));
+    // (the right hard separator points left: the end's color over the bar's)
+    let last: i64 = right.len - 2;
+
+    right[last] = tui::span(
+        hard_l, tui::Style { fg: std::copy(lk.status_end.bg), bg: std::copy(lk.status.bg) }
+    );
+    if (showing) {
+        // as much as fits before the right side (one line)
+        var used: i64 = 1;
+
+        for (let sp: &left::&tui::Span in &left) { used += tui::width(sp.text); }
+
+        for (let sp: &right::&tui::Span in &right) { used += tui::width(sp.text); }
+        var text: string = str::replace(s.msg, "\n", " ");
+        let room: i64 = s.cols - used - 1;
+
+        if (tui::width(text) > room) {
+            if (room <= 1) { text = ""; } else { text = "\(tui::truncate(text, room - 1))…"; }
+        }
+        var st: tui::Style = tui::merge(&lk.status, &lk.message);
+
+        if (s.msg_error) { st = tui::merge(&lk.status, &lk.error); }
+        st.bg = std::copy(lk.status.bg);
+        left[2] = tui::span(" \(text)", st);
+    }
+    return tui::Status {
+        left: left,
+        right: right,
+        style: std::copy(lk.status),
+        height: tui::fixed(1)
+    };
+}
+
 // ---- the whole screen ----------------------------------------------------------------
 
 /// app's frame: paints what prepare read
