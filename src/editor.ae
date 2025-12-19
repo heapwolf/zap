@@ -1877,6 +1877,90 @@ impl App {
         self.b.want = col_of(&l, self.b.cx, self.b.tabstop);
     }
 
+    /// pastes into the buffer (insert mode, or normal mode at the cursor) or
+    /// the command line
+    export fn paste(mut self: &App, text: string) -> void {
+        if (self.mode == Mode::Command || self.mode == Mode::Search) {
+            self.cmd.paste(str::replace(text, "\n", " "));
+            return;
+        }
+        if (self.focus_tree) {
+            return;
+        }
+        self.end_visual();
+        let t: string = str::replace(text, "\r\n", "\n");
+        let was_normal: bool = self.mode == Mode::Normal;
+
+        self.insert_text(str::replace(t, "\r", "\n"));
+        if (was_normal) {
+            self.b.commit();
+        }
+        self.after();
+    }
+
+    // ---- the command line --------------------------------------------------------------
+
+    fn start_cmd(mut self: &App, kind: string) -> void {
+        self.cmd_kind = kind;
+        if (str::eq(kind, ":")) {
+            self.cmd.history = std::copy(self.hist_cmd);
+        } else {
+            self.cmd.history = std::copy(self.hist_search);
+        }
+        self.cmd.clear();
+        self.msg = "";
+        if (str::eq(kind, ":")) { self.mode = Mode::Command; } else { self.mode = Mode::Search; }
+    }
+
+    fn cmd_key(mut self: &App, k: &tui::Key, t: &string) -> void {
+        if (str::eq(*t, "<Esc>") || str::eq(*t, "<C-c>") ||
+            (str::eq(*t, "<BS>") && self.cmd.text.len == 0)) {
+            self.mode = Mode::Normal;
+            return;
+        }
+        if ((str::eq(*t, "<Tab>") || str::eq(*t, "<S-Tab>") || str::eq(*t, "<C-n>") ||
+            str::eq(*t, "<C-p>")) && self.mode == Mode::Command) {
+            self.complete(str::eq(*t, "<Tab>") || str::eq(*t, "<C-n>"));
+            return;
+        }
+        self.wild = [];
+        let r: tui::Edit = self.cmd.handle(k);
+
+        if (r != tui::Edit::Submit && !str::eq(*t, "<CR>")) {
+            return;
+        }
+        let line: string = self.cmd.commit();
+        let kind: string = self.cmd_kind;
+
+        self.mode = Mode::Normal;
+        if (str::eq(kind, "cell")) {
+            self.set_cell(self.cell_r, self.cell_c, line);
+            return;
+        }
+        if (str::eq(kind, ":")) {
+            self.hist_cmd = std::copy(self.cmd.history);
+        } else {
+            self.hist_search = std::copy(self.cmd.history);
+        }
+        self.keep_cmd_history();
+        if (str::eq(kind, ":")) {
+            self.ex(line);
+        } else {
+            var pat: string = line;
+
+            if (pat.len == 0) { pat = self.last_search; }
+            if (pat.len == 0) {
+                self.fail_msg("E35: No previous regular expression");
+                return;
+            }
+            self.last_search = pat;
+            self.search_fwd = str::eq(kind, "/");
+            self.set_matcher(pat);
+            self.search_next(self.search_fwd);
+        }
+        self.after();
+    }
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
