@@ -308,6 +308,59 @@ fn status(s: &App) -> Node(App) {
     };
 }
 
+// ---- the bottom: the command line, the panel ---------------------------------------------
+
+fn bottom(s: &App) -> Node(App) {
+    if (s.mode == Mode::Command || s.mode == Mode::Search) {
+        return tui::Input {
+            state: std::copy(s.cmd), prompt: s.cmd_prompt(), focus: true,
+            style: std::copy(s.look.cmdline),
+            height: tui::fixed(1)
+        };
+    }
+    var st: tui::Style = std::copy(s.look.message);
+
+    if (s.msg_error) { st = std::copy(s.look.error); }
+    return tui::Text {
+        text: s.msg, style: st, wrap: tui::Wrap::Ellipsis, height: tui::fixed(1),
+        width: tui::fill(1)
+    };
+}
+
+fn panel(s: &App) -> Node(App) {
+    let h: i64 = s.panel_height();
+    var kids: Node(App)[] = [];
+    var title: tui::Style = std::copy(s.look.panel);
+
+    title.bold = true;
+    kids.push(tui::Text { text: s.panel_title, style: title, height: tui::fixed(1) });
+    var first: i64 = s.panel.len - (h - 1);
+
+    if (first < 0) { first = 0; }
+
+    for (let i: i64 in first..s.panel.len) {
+        kids.push(tui::Text {
+            text: s.panel[i], style: std::copy(s.look.panel), wrap: tui::Wrap::Ellipsis,
+            height: tui::fixed(1)
+        });
+    }
+    return tui::Column { children: kids, style: std::copy(s.look.panel), height: tui::fixed(h) };
+}
+
+// ---- the command line's completions -------------------------------------------------
+
+/// Tab's completions, in a menu above the command line, at the column of the
+/// word they complete (the chosen one marked)
+export struct WildMenu(A) {
+    export items: string[];
+    export at: i64;
+    export x: i64;
+    export look: Look;
+}
+
+impl WildMenu(A) as Node(A) {
+    export fn measure(self: &WildMenu(A), avail: i64) -> Size { return Size { w: 0, h: 0 }; }
+
 // ---- the whole screen ----------------------------------------------------------------
 
 /// app's frame: paints what prepare read
