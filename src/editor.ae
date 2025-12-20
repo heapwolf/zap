@@ -1961,6 +1961,223 @@ impl App {
         self.after();
     }
 
+    /// runs an ex command line (what follows ":")
+    export fn ex(mut self: &App, line0: string) -> void {
+        var line: string = str::trim(line0);
+
+        while (str::starts_with(line, ":")) {
+            line = str::trim(str::substr(line, 1, line.len - 1));
+        }
+        if (line.len == 0) {
+            return;
+        }
+        // a line number: 42, $
+        if (str::eq(line, "$")) {
+            self.go_first(self.b.text.count - 1);
+            return;
+        }
+        match (str::parse_int(line)) {
+            n => {
+                self.go_first(n - 1);
+                return;
+            },
+            e: str::BadInt => {}
+        }
+        if (str::starts_with(line, "!")) {
+            let sh: string = str::trim(str::substr(line, 1, line.len - 1));
+
+            if (!self.builtin(sh)) {
+                self.run_job(Command { name: "!", run: ["sh", "-c", sh], show: "panel" });
+            }
+            return;
+        }
+        // a range: lines y1..y2 (%, N, ., $, '<, '>, optionally followed by +N, -N)
+        var y1: i64 = self.b.cy;
+        var y2: i64 = self.b.cy;
+        var ranged: bool = false;
+        let rg: i64[] = self.ex_range(&line);
+
+        if (rg.len == 1) {
+            self.fail_msg("E16: Invalid range");
+            return;
+        }
+        if (rg.len == 3) {
+            ranged = true;
+            y1 = rg[0];
+            y2 = rg[1];
+            line = str::trim(str::substr(line, rg[2], line.len - rg[2]));
+            if (y2 < y1) {
+                let t: i64 = y1;
+
+                y1 = y2;
+                y2 = t;
+            }
+            if (line.len == 0) {
+                self.go_first(y2);
+                return;
+            }
+        }
+        if (str::starts_with(line, "substitute") ||
+            (line.len > 1 && line[0] == 's' && !wordy(line[1]) && line[1] != ' ')) {
+            self.substitute(line, ranged, y1, y2);
+            return;
+        }
+        if (ranged) {
+            let what: string = str::trim(line);
+
+            if (str::eq(what, "d") || str::eq(what, "delete")) {
+                self.op_lines("d", y1, y2);
+            } else if (str::eq(what, "y") || str::eq(what, "yank")) {
+                self.op_lines("y", y1, y2);
+            } else if (str::eq(what, ">") || str::eq(what, "<")) {
+                self.op_lines(what, y1, y2);
+            } else if (str::eq(what, "j") || str::eq(what, "join")) {
+                var times: i64 = y2 - y1;
+
+                if (times < 1) { times = 1; }
+                self.join_lines(y1, times);
+            } else {
+                self.fail_msg("E481: No range allowed: \(what) (ranges: s d y > < j)");
+            }
+            return;
+        }
+        // name: letters (and a trailing !), then the argument
+        var ne: i64 = 0;
+
+        while (ne < line.len && line[ne] != ' ' && line[ne] != '!') { ne += 1; }
+        var bang: bool = false;
+        var name: string = str::substr(line, 0, ne);
+
+        if (ne < line.len && line[ne] == '!') {
+            bang = true;
+            ne += 1;
+        }
+        let arg: string = str::trim(str::substr(line, ne, line.len - ne));
+
+        match (name) {
+            "w" | "write" => { self.write(arg, bang); },
+            "earlier" | "ea" | "later" | "lat" => {
+                let back: bool = str::starts_with(name, "e");
+                var a: string = arg;
+
+                if (a.len == 0) { a = "1"; }
+                var unit: i64 = 0;          // 0: changes, else seconds per unit
+                let last: u8 = a[a.len - 1];
+
+                if (last == 's') { unit = 1; }
+                if (last == 'm') { unit = 60; }
+                if (last == 'h') { unit = 3600; }
+                if (last == 'd') { unit = 86400; }
+                if (last == 'f') { unit = -1; }
+                var num: string = a;
+
+                if (unit != 0) { num = str::substr(a, 0, a.len - 1); }
+                var k: i64 = 0;
+
+                match (str::parse_int(num)) {
+                    v => { k = v; },
+                    e: str::BadInt => {
+                        self.fail_msg("E475: :\(name) N, Ns, Nm, Nh, Nd or Nf");
+                        return;
+                    }
+                }
+                var moved: bool = false;
+
+                if (unit == 0) {
+                    if (back) { moved = self.b.go_to(self.b.hist.at - k); }
+                    else { moved = self.b.go_to(self.b.hist.at + k); }
+                } else if (unit < 0) {
+                    // f: to the last written state
+                    moved = self.b.go_to(self.b.hist.saved);
+                } else if (back) {
+                    moved = self.b.earlier_by(k * unit);
+                } else {
+                    moved = self.b.later_by(k * unit);
+                }
+                if (moved) {
+                    self.say_state();
+                } else if (back) {
+                    self.say("Already at oldest change");
+                } else {
+                    self.say("Already at newest change");
+                }
+            },
+            "undol" | "undolist" | "undotree" => {
+                var out: string[] = [];
+                let now: i64 = time::since_epoch() / 1s;
+                let h: &self::&History = &self.b.hist;
+                var mark: string = " ";
+
+                if (h.at == 0) { mark = ">"; }
+                // (the latest states, as many as the panel shows)
+                let first: i64 = h.nodes.len - 15;
+
+                if (first <= 0) { out.push("\(mark)    0  the file as read"); }
+
+                for (let k: i64, let c: &h::&Change in &h.nodes) {
+                    if (k < first) { continue; }
+                    mark = " ";
+                    if (k + 1 == h.at) { mark = ">"; }
+                    var saved: string = "";
+
+                    if (k + 1 == h.saved) { saved = "  (written)"; }
+                    let no: string = str::pad_start("\(k + 1)", 5, ' ');
+                    let par: string = str::pad_start("\(c.parent)", 5, ' ');
+
+                    out.push("\(mark)\(no)  from \(par)  \(c.ops.len) edits  \(ago(now - c.time))\(saved)"
+                    );
+                }
+                self.panel = out;
+                self.panel_title = "undo history: \(self.b.hist.nodes.len) states (g- g+ :earlier :later)";
+            },
+            "wq" | "x" | "xit" | "exit" => {
+                if (self.b.modified || !str::eq(name, "x")) {
+                    if (!self.write(arg, bang)) {
+                        return;
+                    }
+                }
+                self.quit_all(bang);
+            },
+            "wa" | "wall" => {
+                if (self.b.modified && self.b.path.len > 0) { self.write("", bang); }
+                var failed: string[] = [];
+
+                for (let i: i64 in 0..self.others.len) {
+                    let o: &self::&Buf = mut &self.others[i];
+
+                    if (o.modified && o.path.len > 0 && !o.scratch) {
+                        let (n, bad) = save_buf(o, "", bang, self.persist && self.cfg.undofile);
+
+                        if (str::starts_with(bad, "E949")) {
+                            failed.push("\(o.name) (changed since read)");
+                        } else if (bad.len > 0) {
+                            failed.push(o.name);
+                        }
+                    }
+                }
+                if (failed.len > 0) {
+                    self.fail_msg("E141: not written: \(str::join(&failed, ", "))");
+                }
+            },
+            "q" | "quit" | "qa" | "qall" | "quitall" => { self.quit_all(bang); },
+            "wqa" | "xa" | "xall" => {
+                self.ex("wa");
+                self.quit_all(bang);
+            },
+            "e" | "edit" => {
+                if (arg.len == 0) {
+                    if (bang) {
+                        self.reload_current();
+                    } else {
+                        self.file_info();
+                    }
+                    return;
+                }
+                self.edit(arg);
+            },
+            "ene" | "enew" => {
+                var nb: Buf = bufm::scratch(self.next_id, "", "");
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
