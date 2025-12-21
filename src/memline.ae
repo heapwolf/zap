@@ -532,3 +532,136 @@ impl MemLine {
         self.swap = "";
         self.swap_size = 0;
     }
+
+    /// done: remove its swap file (unsaved changes are lost)
+    export fn close(mut self: &MemLine) -> void {
+        for (let k: i64 in 0..self.chunks.len) {
+            if (self.chunks[k].place == Where::Swap) { self.chunks[k].place = Where::Memory; }
+        }
+        self.drop_swap();
+    }
+
+    /// all lines as one string (small buffers: command output, tests)
+    export fn text(mut self: &MemLine) -> string {
+        var b: str::Builder;
+
+        for (let i: i64 in 0..self.count) {
+            b.add(self.get(i));
+            b.add_byte(10);
+        }
+        return b.to_string();
+    }
+}
+
+// ---- tests ---------------------------------------------------------------------
+
+fn sample(n: i64) -> string {
+    var b: str::Builder;
+
+    for (let i: i64 in 0..n) {
+        b.add("line \(i) ");
+        b.add(str::repeat("x", i % 37));
+        b.add_byte(10);
+    }
+    return b.to_string();
+}
+
+fn tmp_file(name: string, text: string) -> string {
+    let dir: string = fs::temp_dir();
+    let p: string = "\(dir)/zap-test-\(name)";
+
+    fs::write_file(p, text);
+    return p;
+}
+
+#test fn indexes_without_reading() -> i32 {
+    let p: string = tmp_file("index", sample(5000));
+
+    match (open(p)) {
+        m0 => {
+            var m: MemLine = m0;
+
+            if (m.count != 5000) {
+                return 1;
+            }
+            if (m.loaded_count() != 0 || m.chunk_count() < 10) {
+                return 2;
+            }
+            if (!str::eq(m.get(4321), "line 4321 \(str::repeat("x", 4321 % 37))")) {
+                return 3;
+            }
+            if (m.loaded_count() != 1) {
+                return 4;
+            }
+            m.resident = 3;
+
+            for (let i: i64 in 0..5000) {
+                if (!str::eq(m.get(i), "line \(i) \(str::repeat("x", i % 37))")) {
+                    return 5;
+                }
+            }
+            if (m.loaded_count() > 3) {
+                return 6;
+            }
+        },
+        e: fs::NotFound => { return 9; }, e2: fs::PermissionDenied => { return 9; },
+        e3: fs::IsADirectory => { return 9; }, e4: fs::IoError => { return 9; }
+    }
+    return 0;
+}
+
+#test fn edits_survive_the_swap() -> i32 {
+    let p: string = tmp_file("swap", sample(3000));
+
+    match (open(p)) {
+        m0 => {
+            var m: MemLine = m0;
+
+            m.resident = 2;
+
+            // change every chunk, then read them all (each changed one goes
+            // to the swap file and back)
+            for (let i: i64 in 0..300) { m.set(i * 10, "changed \(i)"); }
+
+            for (let i: i64 in 0..600) { m.insert(1500, "new \(i)"); }
+            m.remove(0);
+            if (m.count != 3599) {
+                return 1;
+            }
+            if (m.swapped == 0) {
+                return 2;
+            }
+            if (!str::eq(m.get(9), "changed 1")) {
+                return 3;
+            }
+            if (!str::eq(m.get(1499), "new 599") || !str::eq(m.get(2098), "new 0")) {
+                return 4;
+            }
+            if (!str::eq(m.get(2099), "changed 150")) {
+                return 5;
+            }
+            if (!str::eq(m.get(3598), "line 2999 \(str::repeat("x", 2999 % 37))")) {
+                return 6;
+            }
+            match (m.write(p, true, false)) {
+                n => {},
+                e: fs::NotFound => { return 7; }, e2: fs::PermissionDenied => { return 7; },
+                e3: fs::IsADirectory => { return 7; }, e4: fs::IoError => { return 7; },
+                e5: ChangedOnDisk => { return 7; }
+            }
+            let back: string = fs::read_file(p) ?? "";
+            let lines: string[] = str::split(back, "\n");
+
+            if (lines.len != 3600 || !str::eq(lines[2099], "changed 150")) {
+                return 8;
+            }
+            if (!str::eq(m.get(2099), "changed 150") || m.broken.len > 0) {
+                return 10;
+            }
+            m.close();
+        },
+        e: fs::NotFound => { return 9; }, e2: fs::PermissionDenied => { return 9; },
+        e3: fs::IsADirectory => { return 9; }, e4: fs::IoError => { return 9; }
+    }
+    return 0;
+}
