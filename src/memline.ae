@@ -665,3 +665,96 @@ fn tmp_file(name: string, text: string) -> string {
     }
     return 0;
 }
+
+#test fn keeps_line_endings() -> i32 {
+    let p: string = tmp_file("crlf", "a\r\nb\r\nc");
+
+    match (open(p)) {
+        m0 => {
+            var m: MemLine = m0;
+
+            if (!m.crlf || m.eol || m.count != 3) {
+                return 1;
+            }
+            if (!str::eq(m.get(1), "b") || !str::eq(m.get(2), "c")) {
+                return 2;
+            }
+            m.insert(3, "d");
+            match (m.write(p, true, false)) {
+                n => {},
+                e: fs::NotFound => { return 7; }, e2: fs::PermissionDenied => { return 7; },
+                e3: fs::IsADirectory => { return 7; }, e4: fs::IoError => { return 7; },
+                e5: ChangedOnDisk => { return 7; }
+            }
+            if (!str::eq(fs::read_file(p) ?? "", "a\r\nb\r\nc\r\nd")) {
+                return 3;
+            }
+        },
+        e: fs::NotFound => { return 9; }, e2: fs::PermissionDenied => { return 9; },
+        e3: fs::IsADirectory => { return 9; }, e4: fs::IoError => { return 9; }
+    }
+    var e: MemLine = of_text("");
+
+    if (e.count != 1 || e.get(0).len != 0) {
+        return 4;
+    }
+    return 0;
+}
+
+#test fn writes_in_place() -> i32 {
+    let p: string = tmp_file("inplace", "one\ntwo\n");
+    let link: string = "\(p).link";
+
+    // its own mode, and a symlink to it
+    if (process::run(
+        ["/bin/sh", "-c", "chmod 751 \"$0\" && rm -f \"$1\" && ln -s \"$0\" \"$1\"", p, link]
+    ) !=
+        0) {
+        return 1;
+    }
+    match (open(link)) {
+        m0 => {
+            var m: MemLine = m0;
+
+            m.set(0, "uno");
+            match (m.write(link, true, false)) {
+                n => {},
+                e: fs::NotFound => { return 2; }, e2: fs::PermissionDenied => { return 2; },
+                e3: fs::IsADirectory => { return 2; }, e4: fs::IoError => { return 2; },
+                e5: ChangedOnDisk => { return 2; }
+            }
+            // the link is still a link; its file has the new text and mode
+            if (process::run(
+                [
+                    "/bin/sh", "-c",
+                    "test -L \"$1\" && test \"$(stat -c %a \"$0\" 2>/dev/null || stat -f %Lp \"$0\")\" = 751",
+                    p, link
+                ]
+            ) !=
+                0) {
+                return 3;
+            }
+            if (!str::eq(fs::read_file(p) ?? "", "uno\ntwo\n")) {
+                return 4;
+            }
+            if (!str::eq(m.get(1), "two") || m.broken.len > 0) {
+                return 5;
+            }
+            // changed by someone else: not overwritten unless forced
+            fs::write_file(p, "theirs\n");
+            m.set(0, "mine");
+            match (m.write(link, true, false)) {
+                n => { return 6; },
+                e: fs::NotFound => { return 7; }, e2: fs::PermissionDenied => { return 7; },
+                e3: fs::IsADirectory => { return 7; }, e4: fs::IoError => { return 7; },
+                e5: ChangedOnDisk => {}
+            }
+            if (!str::eq(fs::read_file(p) ?? "", "theirs\n")) {
+                return 8;
+            }
+        },
+        e: fs::NotFound => { return 9; }, e2: fs::PermissionDenied => { return 9; },
+        e3: fs::IsADirectory => { return 9; }, e4: fs::IoError => { return 9; }
+    }
+    return 0;
+}
