@@ -1,0 +1,31 @@
+//! where zap keeps state between runs: under $XDG_STATE_HOME/zap (else
+//! ~/.local/state/zap), one directory per kind (swap, undo, new, ...), each
+//! with a file per edited file, named for its path with / as %.
+
+import fs from "std/fs";
+import str from "std/string";
+import path from "std/path";
+import process from "std/process";
+
+/// zap's state directory, or sub in it ("": the directory itself)
+export fn dir(sub: string) -> string {
+    var base: string = process::env("XDG_STATE_HOME");
+
+    if (base.len == 0) { base = "\(process::env("HOME"))/.local/state"; }
+    if (sub.len == 0) {
+        return "\(base)/zap";
+    }
+    return "\(base)/zap/\(sub)";
+}
+
+/// file p's name in a state directory: its cleaned path, / as %
+export fn flat(p: string) -> string { return str::replace(path::clean(p), "/", "%"); }
+
+/// creates directory d and its parents if missing (silently: a later write
+/// into it reports any error)
+export fn ensure_dir(d: string) -> void {
+    match (fs::make_dirs(d)) {
+        v => {}, e: fs::NotFound => {}, e2: fs::PermissionDenied => {}, e3: fs::AlreadyExists => {},
+        e4: fs::IoError => {}
+    }
+}
