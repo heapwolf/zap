@@ -1,0 +1,106 @@
+//! zap's file tree: the directory zap started in, with directories opened
+//! and closed in place. The tree holds only visible rows: opening a
+//! directory lists it (directories first, then files, each by name) and
+//! inserts its entries below it; closing removes them.
+
+import fs from "std/fs";
+import str from "std/string";
+import path from "std/path";
+import state from "state.ae";
+
+/// a tree row: an entry, its depth, and for a directory whether it is
+/// open
+export struct Entry {
+    export path: string;
+    export name: string;
+    export depth: i64;
+    export dir: bool;
+    export open: bool = false;
+}
+
+/// the visible rows, the selected one, the first one on screen
+export struct Tree {
+    export root: string;
+    export rows: Entry[] = [];
+    export cursor: i64 = 0;
+    export top: i64 = 0;
+    export hidden: bool = true;  // show names starting with "."
+}
+
+/// the tree of directory root (its name as first row, its entries open)
+export fn tree(root: string, hidden: bool) -> Tree {
+    var t: Tree = Tree { root: root, hidden: hidden };
+    var name: string = path::base(root);
+
+    if (name.len == 0) { name = root; }
+    t.rows.push(Entry { path: root, name: name, depth: 0, dir: true, open: false });
+    t.expand(0);
+    return t;
+}
+
+// does entry i sort before j (by name ignoring case, then bytes)? low[k]
+// is entry k's name lowercased
+fn before(xs: &Entry[], low: &string[], i: i64, j: i64) -> bool {
+    let c: i64 = str::cmp(low[i], low[j]);
+
+    if (c != 0) {
+        return c < 0;
+    }
+    return str::cmp(xs[i].name, xs[j].name) < 0;
+}
+
+// sort xs: a merge sort of their indices, each name lowercased once (a
+// directory can have thousands of entries: node_modules)
+fn sort(mut xs: &Entry[]) -> void {
+    let n: i64 = xs.len;
+
+    if (n < 2) {
+        return;
+    }
+    var low: string[] = [];
+    var idx: i64[] = [];
+
+    for (let k: i64 in 0..n) {
+        low.push(str::to_lower(xs[k].name));
+        idx.push(k);
+    }
+    var tmp: i64[] = std::copy(idx);
+    var width: i64 = 1;
+
+    while (width < n) {
+        var lo: i64 = 0;
+
+        while (lo < n) {
+            var mid: i64 = lo + width;
+
+            if (mid > n) { mid = n; }
+            var hi: i64 = lo + 2 * width;
+
+            if (hi > n) { hi = n; }
+            var i: i64 = lo;
+            var j: i64 = mid;
+            var k: i64 = lo;
+
+            while (k < hi) {
+                if (i < mid && (j >= hi || !before(xs, &low, idx[j], idx[i]))) {
+                    tmp[k] = idx[i];
+                    i += 1;
+                } else {
+                    tmp[k] = idx[j];
+                    j += 1;
+                }
+                k += 1;
+            }
+            lo = hi;
+        }
+        let t: i64[] = idx;
+
+        idx = tmp;
+        tmp = t;
+        width *= 2;
+    }
+    var out: Entry[] = [];
+
+    for (let k: i64 in &idx) { out.push(std::take(mut &xs[k])); }
+    *xs = out;
+}
