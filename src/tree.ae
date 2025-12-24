@@ -104,3 +104,107 @@ fn sort(mut xs: &Entry[]) -> void {
     for (let k: i64 in &idx) { out.push(std::take(mut &xs[k])); }
     *xs = out;
 }
+
+impl Tree {
+    /// open row i (a directory): its entries go below it
+    export fn expand(mut self: &Tree, i: i64) -> void {
+        if (i < 0 || i >= self.rows.len || !self.rows[i].dir || self.rows[i].open) {
+            return;
+        }
+        let dir: string = self.rows[i].path;
+        let depth: i64 = self.rows[i].depth + 1;
+        let names: string[] = match (fs::list(dir)) {
+            n => n,
+            e: fs::NotFound => [], e2: fs::PermissionDenied => [], e3: fs::NotADirectory => [],
+            e4: fs::IoError => []
+        };
+        var dirs: Entry[] = [];
+        var files: Entry[] = [];
+
+        for (let nm: string in &names) {
+            if (!self.hidden && nm.len > 0 && nm[0] == '.') { continue; }
+            let p: string = path::join(dir, nm);
+            var is_dir: bool = false;
+
+            match (fs::info(p)) {
+                inf => { is_dir = inf.kind == fs::Kind::Dir; },
+                e: fs::NotFound => {}, e2: fs::PermissionDenied => {}, e3: fs::IoError => {}
+            }
+            let en: Entry = Entry { path: p, name: nm, depth: depth, dir: is_dir };
+
+            if (is_dir) { dirs.push(en); } else { files.push(en); }
+        }
+        sort(mut &dirs);
+        sort(mut &files);
+        var rest: Entry[] = [];
+
+        while (self.rows.len > i + 1) { rest.push(self.rows.pop()); }
+
+        for (let k: i64 in 0..dirs.len) { self.rows.push(std::take(mut &dirs[k])); }
+
+        for (let k: i64 in 0..files.len) { self.rows.push(std::take(mut &files[k])); }
+
+        while (rest.len > 0) { self.rows.push(rest.pop()); }
+        self.rows[i].open = true;
+    }
+
+    /// close row i (a directory): its entries are removed
+    export fn collapse(mut self: &Tree, i: i64) -> void {
+        if (i < 0 || i >= self.rows.len || !self.rows[i].open) {
+            return;
+        }
+        let depth: i64 = self.rows[i].depth;
+        var end: i64 = i + 1;
+
+        while (end < self.rows.len && self.rows[end].depth > depth) { end += 1; }
+        let gone: i64 = end - (i + 1);
+        var keep: Entry[] = [];
+
+        for (let k: i64 in 0..self.rows.len) {
+            if (k <= i || k >= end) { keep.push(std::copy(self.rows[k])); }
+        }
+        self.rows = keep;
+        self.rows[i].open = false;
+        if (self.cursor > i && self.cursor < end) {
+            self.cursor = i;
+        } else if (self.cursor >= end) {
+            self.cursor -= gone;
+        }
+    }
+
+    /// open or close row i
+    export fn toggle(mut self: &Tree, i: i64) -> void {
+        if (i < 0 || i >= self.rows.len || !self.rows[i].dir) {
+            return;
+        }
+        if (self.rows[i].open) { self.collapse(i); } else { self.expand(i); }
+    }
+
+    /// the row of row i's directory (i itself for the root)
+    export fn parent(self: &Tree, i: i64) -> i64 {
+        if (i <= 0 || i >= self.rows.len) {
+            return 0;
+        }
+        let d: i64 = self.rows[i].depth;
+        var k: i64 = i - 1;
+
+        while (k > 0 && self.rows[k].depth >= d) { k -= 1; }
+        return k;
+    }
+
+    /// select row i (clamped), shown in height rows
+    export fn select(mut self: &Tree, i: i64, height: i64) -> void {
+        var j: i64 = i;
+
+        if (j >= self.rows.len) { j = self.rows.len - 1; }
+        if (j < 0) { j = 0; }
+        self.cursor = j;
+        self.show(height);
+    }
+
+    /// scroll so the selection shows in height rows
+    export fn show(mut self: &Tree, height: i64) -> void {
+        if (self.cursor < self.top) { self.top = self.cursor; }
+        if (height > 0 && self.cursor >= self.top + height) { self.top = self.cursor - height + 1; }
+        if (self.top < 0) { self.top = 0; }
+    }
