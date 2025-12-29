@@ -1,3 +1,107 @@
+//! zap's screen: the tree and editor side by side (the mouse drags the
+//! split), the status line, the command line, a panel for long messages, and
+//! a picker on top. Each frame uses only what App.prepare read: the lines and
+//! rows on screen.
+
+import tui from "std/tui";
+import { Node, Frame, Rect, Size, Sizing, Pen } from "std/tui";
+import str from "std/string";
+import path from "std/path";
+import { App, Mode, VisLine, VisRow } from "editor.ae";
+import { SheetVis, VisCell } from "sheet.ae";
+import sheetm from "sheet.ae";
+import { DiagramVis } from "editor.ae";
+import editor from "editor.ae";
+import { Look } from "themes/theme.ae";
+import { Kind, Decl } from "symbols.ae";
+import { next_char, cell_width, col_of } from "buffer.ae";
+
+// ---- the tree ----------------------------------------------------------------------
+
+/// the tree's rows on screen
+export struct TreePane(A) {
+    export rows: VisRow[];
+    export look: Look;
+}
+
+impl TreePane(A) as Node(A) {
+    export fn measure(self: &TreePane(A), avail: i64) -> Size { return Size { w: 0, h: 0 }; }
+
+    export fn sizing(self: &TreePane(A)) -> Sizing {
+        return Sizing { w: tui::fill(1), h: tui::fill(1) };
+    }
+
+    export fn render(self: &TreePane(A), mut f: &Frame(A), area: Rect) -> void {
+        f.fill(std::copy(area), &self.look.tree);
+        let search: Pen = f.pen(&self.look.search);
+
+        for (let y: i64, let r: &self::&VisRow in &self.rows) {
+            if (y >= area.h) { break; }
+            let row: Rect = Rect { x: area.x, y: area.y + y, w: area.w, h: 1 };
+            var s: tui::Style = std::copy(self.look.tree_file);
+
+            if (r.kind == 0) { s = std::copy(self.look.tree_root); }
+            else if (r.kind == 1) { s = std::copy(self.look.tree_dir); }
+            else if (r.special) { s = std::copy(self.look.tree_special); }
+            if (r.open) { s = tui::merge(&s, &self.look.tree_open); }
+            if (r.selected) {
+                f.fill(std::copy(row), &self.look.tree_cursor);
+                s.bg = std::copy(self.look.tree_cursor.bg);
+            }
+            let p: Pen = f.pen(&s);
+            let x0: i64 = area.x + 1 + r.depth * 2;
+            let w: i64 = area.w - (x0 - area.x);
+
+            if (w <= 0) { continue; }
+            // the name, with search matches highlighted
+            var x: i64 = x0;
+            var at: i64 = 0;
+            var k: i64 = 0;
+            let n: i64 = r.name.len;
+
+            while (at < n && x < x0 + w) {
+                var end: i64 = n;
+                var lit: bool = false;
+
+                if (k + 1 < r.matches.len) {
+                    if (r.matches[k] <= at) {
+                        end = r.matches[k + 1];
+                        lit = true;
+                        k += 2;
+                    } else {
+                        end = r.matches[k];
+                    }
+                }
+                if (end <= at) { end = next_char(&r.name, at); }
+                if (lit) {
+                    x += f.print(x, area.y + y, &r.name, at, end, &search, x0 + w - x);
+                } else {
+                    x += f.print(x, area.y + y, &r.name, at, end, &p, x0 + w - x);
+                }
+                at = end;
+            }
+        }
+    }
+}
+
+// ---- the editor ----------------------------------------------------------------------
+
+/// the buffer's lines on screen: the gutter (line numbers), the text from
+/// column left, the cursor (cx, cy: in text cells; -1: none)
+export struct EditPane(A) {
+    export lines: VisLine[];
+    export gutter: i64;
+    export left: i64;
+    export tabstop: i64;
+    export tildes: bool;            // ~ on rows past the end
+    export icons: bool;             // git signs as bars (else + ~ _)
+    export look: Look;
+    export cx: i64;
+    export cy: i64;
+    export intro: tui::Span[][];    // splash lines, centered over an empty buffer
+    export ghost: string;           // rest of the chosen completion, shown after the cursor
+}
+
 impl EditPane(A) as Node(A) {
     export fn measure(self: &EditPane(A), avail: i64) -> Size { return Size { w: 0, h: 0 }; }
 
