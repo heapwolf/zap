@@ -669,6 +669,103 @@ impl App {
         }
     }
 
+    // tree window
+    fn prepare_tree(mut self: &App) -> void {
+        self.tree_vis.clear();
+        if (self.split.at <= 0) {
+            return;
+        }
+        self.tree.show(self.tree_h);
+        let open: string = self.b.path;
+        let hl: bool = self.hl && self.matcher.pattern.len > 0;
+        let n: i64 = self.tree.rows.len;
+
+        for (let y: i64 in 0..self.tree_h) {
+            let i: i64 = self.tree.top + y;
+
+            if (i >= n) { break; }
+            let e: &self::&Entry = &self.tree.rows[i];
+            var kind: i64 = 2;
+
+            if (e.dir) { kind = 1; }
+            if (i == 0) { kind = 0; }
+            var special: bool = false;
+
+            for (let s: string in &self.cfg.special) {
+                if (str::eq(s, e.name)) { special = true; }
+            }
+            var ms: i64[] = [];
+
+            if (hl) { ms = self.matcher.all(&e.name); }
+            self.tree_vis.push(VisRow {
+                name: e.name, depth: e.depth, kind: kind, special: special,
+                open: str::eq(e.path, open), selected: i == self.tree.cursor, matches: ms
+            });
+        }
+    }
+
+    /// does the intro show? (started with no file, and the start buffer is
+    /// still empty and on screen)
+    export fn intro(self: &App) -> bool {
+        return self.splash && self.b.id == 1 && self.b.path.len == 0 && !self.b.modified &&
+            self.b.text.count == 1 && self.vis.len > 0 && self.vis[0].text.len == 0 &&
+            self.mode != Mode::Insert;
+    }
+
+    /// line i's text as prepare read it ("" if off screen)
+    export fn vis_line(self: &App, i: i64) -> string {
+        let y: i64 = i - self.b.top;
+
+        if (y < 0 || y >= self.vis.len) {
+            return "";
+        }
+        return self.vis[y].text;
+    }
+
+    /// is the command-line row on screen?
+    export fn cmd_line_shown(self: &App) -> bool {
+        // (a cell edit is in the spreadsheet's bar)
+        return self.cfg.cmdheight > 0 || self.mode == Mode::Command ||
+            (self.mode == Mode::Search && !str::eq(self.cmd_kind, "cell"));
+    }
+
+    /// panel rows (0: none)
+    export fn panel_height(self: &App) -> i64 {
+        if (self.panel.len == 0) {
+            return 0;
+        }
+        var h: i64 = self.panel.len + 1;
+
+        if (h > self.rows / 2) { h = self.rows / 2; }
+        return h;
+    }
+
+    /// background work: moves the highlighter's states toward the line the
+    /// screen needs -> is there more to do?
+    export fn background(mut self: &App) -> bool {
+        if (self.walking) { self.walk_step(); }
+        if (self.grepping()) { self.grep_step(); }
+        if (self.want_states >= 0) {
+            let goal: i64 = self.want_states;
+
+            if (self.b.find_states(goal, 4096)) { self.want_states = -1; }
+        }
+        return self.has_work();
+    }
+
+    /// is there background work (highlighting toward the screen, listing the
+    /// project, a project search)?
+    export fn has_work(self: &App) -> bool {
+        return self.want_states >= 0 || self.walking || self.grepping();
+    }
+
+    fn grepping(self: &App) -> bool {
+        return self.picking.len > 0 && self.cat == 1 && self.grep_query.len >= 2 &&
+            self.grep_at < self.files.len && self.pick_items.len < GREP_MAX;
+    }
+
+    // ---- keys ------------------------------------------------------------------------
+
     /// handles key k in the current mode
     export fn key(mut self: &App, k: &tui::Key) -> void {
         let t: string = token(k);
