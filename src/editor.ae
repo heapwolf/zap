@@ -2058,6 +2058,109 @@ impl App {
         self.after();
     }
 
+    // a tree key -> 0 needs more keys, 1 done, 2 not one
+    fn tree_cmd(mut self: &App, toks: &string[]) -> i64 {
+        let n: i64 = toks.len;
+        let t: string = toks[0];
+        let h: i64 = self.tree_h;
+        let at: i64 = self.tree.cursor;
+
+        match (t) {
+            "j" | "<Down>" | "<C-n>" => { self.tree.select(at + 1, h); },
+            "k" | "<Up>" | "<C-p>" => { self.tree.select(at - 1, h); },
+            "G" => { self.tree.select(self.tree.rows.len - 1, h); },
+            "g" => {
+                if (n < 2) {
+                    return 0;
+                }
+                if (str::eq(toks[1], "g")) {
+                    self.tree.select(0, h);
+                } else {
+                    return 2;
+                }
+            },
+            "<C-d>" | "<PageDown>" => { self.tree.select(at + h / 2, h); },
+            "<C-u>" | "<PageUp>" => { self.tree.select(at - h / 2, h); },
+            "<CR>" | "o" | "l" | "<Right>" | "<2-LeftMouse>" => {
+                self.tree_open(at, true);
+            },
+            "h" | "<Left>" => {
+                if (self.tree.rows[at].open && at > 0) {
+                    self.tree.collapse(at);
+                } else {
+                    self.tree.select(self.tree.parent(at), h);
+                }
+            },
+            "R" => {
+                self.tree.refresh();
+                self.say("tree read again");
+            },
+            "H" => {
+                self.tree.hidden = !self.tree.hidden;
+                self.tree.refresh();
+            },
+            "-" => {
+                let up: string = path::dir(self.tree.root);
+
+                if (!str::eq(up, self.tree.root)) {
+                    self.tree = tree(up, self.tree.hidden);
+                    self.reveal();
+                }
+            },
+            "C" => {
+                if (self.tree.rows[at].dir) {
+                    self.tree = tree(self.tree.rows[at].path, self.tree.hidden);
+                }
+            },
+            "q" => {
+                self.split.at = 0;
+                self.focus_tree = false;
+            },
+            "n" => { self.search_next(self.search_fwd); },
+            "N" => { self.search_next(!self.search_fwd); },
+            ":" => { self.start_cmd(":"); },
+            "/" => { self.start_cmd("/"); },
+            "?" => { self.start_cmd("?"); },
+            "<Esc>" => {},
+            "<C-w>" => {
+                if (n < 2) {
+                    return 0;
+                }
+                let w: string = toks[1];
+
+                if (str::eq(w, "l") || str::eq(w, "w") || str::eq(w, "<C-w>") ||
+                    str::eq(w, "<C-l>") ||
+                    str::eq(w, "p")) {
+                    self.focus_tree = false;
+                } else if (str::eq(w, ">") || str::eq(w, "<lt>")) {
+                    if (str::eq(w, ">")) { self.split.by(1); } else { self.split.by(-1); }
+                } else if (!str::eq(w, "h")) {
+                    return 2;
+                }
+            },
+            _ => { return 2; }
+        }
+        return 1;
+    }
+
+    /// chooses tree row i: a directory toggles, a file opens (focus: the editor
+    /// gets the keys)
+    export fn tree_open(mut self: &App, i: i64, focus: bool) -> void {
+        if (i < 0 || i >= self.tree.rows.len) {
+            return;
+        }
+        self.tree.cursor = i;
+        if (self.tree.rows[i].dir) {
+            if (i > 0) { self.tree.toggle(i); }
+            return;
+        }
+        let p: string = self.tree.rows[i].path;
+
+        if (self.edit(p) && focus) { self.focus_tree = false; }
+    }
+
+    // ---- ex commands -------------------------------------------------------------------
+
     /// runs an ex command line (what follows ":")
     export fn ex(mut self: &App, line0: string) -> void {
         var line: string = str::trim(line0);
