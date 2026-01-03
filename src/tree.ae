@@ -208,3 +208,84 @@ impl Tree {
         if (height > 0 && self.cursor >= self.top + height) { self.top = self.cursor - height + 1; }
         if (self.top < 0) { self.top = 0; }
     }
+
+    /// reread every directory, keeping open ones open
+    export fn refresh(mut self: &Tree) -> void {
+        var open: string[] = [];
+
+        for (let e: &self::&Entry in &self.rows) {
+            if (e.open) { open.push(e.path); }
+        }
+        let at: string = self.rows[self.cursor].path;
+        var t: Tree = tree(self.root, self.hidden);
+        var i: i64 = 1;
+
+        while (i < t.rows.len) {
+            if (t.rows[i].dir) {
+                for (let p: string in &open) {
+                    if (str::eq(p, t.rows[i].path)) { t.expand(i); }
+                }
+            }
+            i += 1;
+        }
+
+        for (let k: i64, let e: &t::&Entry in &t.rows) {
+            if (str::eq(e.path, at)) { t.cursor = k; }
+        }
+        t.top = self.top;
+        *self = t;
+    }
+
+    /// open the directories down to file p (inside the root) -> its row
+    /// (-1: not in the tree)
+    export fn reveal(mut self: &Tree, p: string) -> i64 {
+        if (!path::is_within(self.root, p)) {
+            return -1;
+        }
+        var i: i64 = 0;
+
+        while (i < self.rows.len) {
+            let e: string = self.rows[i].path;
+
+            if (str::eq(e, p)) {
+                return i;
+            }
+            if (self.rows[i].dir && path::is_within(e, p) && !str::eq(e, p)) {
+                self.expand(i);
+            }
+            i += 1;
+        }
+        return -1;
+    }
+}
+
+#test fn opens_and_closes() -> i32 {
+    let dir: string = fs::temp_dir();
+    let base: string = "\(dir)/zap-tree-test";
+
+    state::ensure_dir("\(base)/b/inner");
+    fs::write_file("\(base)/Zed.md", "z");
+    fs::write_file("\(base)/a.txt", "a");
+    fs::write_file("\(base)/b/inner/deep.ae", "d");
+    var t: Tree = tree(base, true);
+
+    // root, then the directory b, then the files a.txt, Zed.md
+    if (t.rows.len != 4 || !str::eq(t.rows[1].name, "b") || !str::eq(t.rows[2].name, "a.txt")) {
+        return 1;
+    }
+    t.expand(1);
+    if (t.rows.len != 5 || t.rows[2].depth != 2) {
+        return 2;
+    }
+    t.cursor = 3;
+    t.collapse(1);
+    if (t.rows.len != 4 || t.cursor != 2) {
+        return 3;
+    }
+    let at: i64 = t.reveal("\(base)/b/inner/deep.ae");
+
+    if (at != 3 || t.parent(at) != 2) {
+        return 4;
+    }
+    return 0;
+}
