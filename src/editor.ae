@@ -432,6 +432,112 @@ impl App {
     /// (no command-line row: it comes and goes without moving the status line)
     export fn msg_in_status(self: &App) -> bool { return self.cfg.cmdheight == 0; }
 
+    /// ms until the message goes (-1: no message to wait for)
+    export fn msg_wait(self: &App) -> i64 {
+        if (self.msg.len == 0 || self.msg_until == 0) {
+            return -1;
+        }
+        let left: i64 = self.msg_until - time::since_epoch() / 1ms;
+
+        if (left < 0) {
+            return 0;
+        }
+        return left;
+    }
+
+    /// makes file p's buffer current (opening it if needed) -> did it open?
+    export fn edit(mut self: &App, p0: string) -> bool {
+        var p: string = p0;
+
+        if (p.len == 0) {
+            return false;
+        }
+        if (!path::is_absolute(p)) { p = path::join(self.cwd, p); }
+        p = path::clean(p);
+        if (str::eq(self.b.path, p)) {
+            self.switch_id(self.b.id);
+            return true;
+        }
+        var found: i64 = -1;
+
+        for (let o: &self::&Buf in &self.others) {
+            if (str::eq(o.path, p)) { found = o.id; }
+        }
+        if (found >= 0) {
+            self.switch_id(found);
+            return true;
+        }
+        let ft: FileType = self.cfg.filetype(p);
+
+        match (bufm::open(self.next_id, p, short_name(self.cwd, p), ft)) {
+            b0 => {
+                var b: Buf = b0;
+
+                b.text.resident = self.cfg.resident;
+                if (self.cfg.sheets &&
+                    (str::eq(b.ft.syntax, "csv") || str::eq(b.ft.syntax, "tsv"))) {
+                    b.sheet.push(Sheet {});
+                }
+                if (self.persist && self.cfg.undofile) { b.recall_history(); }
+                if (b.ft.tabstop == 0) { b.tabstop = self.cfg.tabstop; }
+                self.next_id += 1;
+                let lines: i64 = b.text.count;
+                let id: i64 = b.id;
+
+                self.others.push(b);
+                self.switch_id(id);
+                // the empty start buffer goes once a file opens
+                self.drop_empty_start();
+                var info: string = "\"\(short_name(self.cwd, p))\" \(lines)L";
+
+                if (!self.file_exists(p)) { info = "\"\(short_name(self.cwd, p))\" [New]"; }
+                self.say(info);
+                self.hooks("open", p);
+                self.reveal();
+                return true;
+            },
+            e: fs::PermissionDenied => { self.fail_msg("\(p): permission denied"); },
+            e2: fs::IsADirectory => { self.fail_msg("\(p) is a directory"); },
+            e3: fs::IoError => { self.fail_msg("\(p): cannot be read"); }
+        }
+        return false;
+    }
+
+    fn file_exists(self: &App, p: string) -> bool {
+        match (fs::info(p)) {
+            i => { return true; },
+            e: fs::NotFound => { return false; }, e2: fs::PermissionDenied => { return true; },
+            e3: fs::IoError => { return true; }
+        }
+        return false;
+    }
+
+    // index in others of the buffer with id (-1: none)
+    fn find_other(self: &App, id: i64) -> i64 {
+        for (let i: i64, let o: &self::&Buf in &self.others) {
+            if (o.id == id) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /// buffer ids, in order
+    export fn ids(self: &App) -> i64[] {
+        var out: i64[] = [];
+        var placed: bool = false;
+
+        for (let o: &self::&Buf in &self.others) {
+            if (!placed && self.b.id < o.id) {
+                out.push(self.b.id);
+                placed = true;
+            }
+            out.push(o.id);
+        }
+        if (!placed) { out.push(self.b.id); }
+        return out;
+    }
+
     /// makes a scratch buffer name with text current (replacing one of that name)
     export fn show_scratch(mut self: &App, name: string, text: string) -> void {
         if (self.b.scratch && str::eq(self.b.name, name)) {
