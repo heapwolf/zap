@@ -538,6 +538,119 @@ impl App {
         return out;
     }
 
+    /// buffer infos, by id
+    export fn infos(self: &App) -> BufInfo[] {
+        var out: BufInfo[] = [];
+
+        for (let id: i64 in self.ids()) {
+            if (id == self.b.id) {
+                out.push(info_of(&self.b));
+            } else {
+                let at: i64 = self.find_other(id);
+
+                out.push(info_of(&self.others[at]));
+            }
+        }
+        return out;
+    }
+
+    // drops the unnamed empty start buffer once there is another
+    fn drop_empty_start(mut self: &App) -> void {
+        var gone: i64 = -1;
+
+        for (let o: &self::&Buf in &self.others) {
+            if (o.path.len == 0 && !o.scratch && !o.modified && o.text.count == 1 && o.id == 1) {
+                gone = o.id;
+            }
+        }
+        if (gone >= 0) { self.close_id(gone); }
+    }
+
+    /// makes buffer id current -> does it exist?
+    export fn switch_id(mut self: &App, id: i64) -> bool {
+        self.mode = Mode::Normal;
+        self.focus_tree = false;
+        if (id == self.b.id) {
+            self.git_fetch(false);
+            return true;
+        }
+        let at: i64 = self.find_other(id);
+
+        if (at < 0) {
+            return false;
+        }
+        self.b.commit();
+        let old: i64 = self.b.id;
+        // others stay ordered by id: the old one goes back to its place
+        var rest: Buf[] = [];
+        var target: Buf[] = [];
+        var placed: bool = false;
+
+        for (let i: i64 in 0..self.others.len) {
+            if (i == at) {
+                target.push(std::take(mut &self.others[i]));
+                continue;
+            }
+            if (!placed && old < self.others[i].id) {
+                rest.push(std::take(mut &self.b));
+                placed = true;
+            }
+            rest.push(std::take(mut &self.others[i]));
+        }
+        if (!placed) { rest.push(std::take(mut &self.b)); }
+        self.others = rest;
+        self.b = target.pop();
+        self.alt = old;
+        self.git_fetch(false);
+        return true;
+    }
+
+    /// closes buffer id (another becomes current; an empty one if it was the
+    /// last)
+    export fn close_id(mut self: &App, id: i64) -> void {
+        if (id == self.b.id) {
+            self.b.text.close();
+            var next_id: i64 = -1;
+
+            if (self.alt >= 0 && self.find_other(self.alt) >= 0) { next_id = self.alt; }
+            else if (self.others.len > 0) { next_id = self.others[self.others.len - 1].id; }
+            if (next_id < 0) {
+                self.b = bufm::scratch(self.next_id, "", "");
+                self.b.scratch = false;
+                self.next_id += 1;
+                return;
+            }
+            let at: i64 = self.find_other(next_id);
+            var rest: Buf[] = [];
+            var target: Buf[] = [];
+
+            for (let i: i64 in 0..self.others.len) {
+                if (i == at) {
+                    target.push(std::take(mut &self.others[i]));
+                } else {
+                    rest.push(std::take(mut &self.others[i]));
+                }
+            }
+            self.others = rest;
+            self.b = target.pop();
+            self.alt = -1;
+            return;
+        }
+        var rest: Buf[] = [];
+
+        for (let i: i64 in 0..self.others.len) {
+            if (self.others[i].id == id) {
+                let o: &self::&Buf = mut &self.others[i];
+
+                o.text.close();
+            } else {
+                rest.push(std::take(mut &self.others[i]));
+            }
+        }
+        self.others = rest;
+        if (self.alt == id) { self.alt = -1; }
+    }
+
     /// makes a scratch buffer name with text current (replacing one of that name)
     export fn show_scratch(mut self: &App, name: string, text: string) -> void {
         if (self.b.scratch && str::eq(self.b.name, name)) {
@@ -2483,6 +2596,135 @@ impl App {
             },
             "ene" | "enew" => {
                 var nb: Buf = bufm::scratch(self.next_id, "", "");
+
+    fn file_info(mut self: &App) -> void {
+        var nm: string = self.b.name;
+
+        if (nm.len == 0) { nm = "[No Name]"; }
+        var mod: string = "";
+
+        if (self.b.modified) { mod = " [Modified]"; }
+        let pct: i64 = (self.b.cy + 1) * 100 / self.b.text.count;
+        var extra: string = "";
+
+        if (self.b.text.broken.len > 0) { extra = " (\(self.b.text.broken))"; }
+        self.say(
+            "\"\(nm)\"\(mod) \(self.b.text.count) lines --\(pct)%-- (\(self.b.text.loaded_count())/\(self.b.text.chunk_count()) chunks in memory)\(extra)"
+        );
+    }
+
+    fn list_buffers(mut self: &App) -> void {
+        var lines: string[] = [];
+
+        for (let b: BufInfo in self.infos()) {
+            var flags: string = " ";
+
+            if (b.id == self.b.id) { flags = "%"; } else if (b.id == self.alt) { flags = "#"; }
+            var mod: string = " ";
+
+            if (b.modified) { mod = "+"; }
+            lines.push("\(str::pad_start("\(b.id)", 3, ' ')) \(flags)\(mod) \"\(b.name)\"  line \(b.line)"
+            );
+        }
+        self.panel = lines;
+        self.panel_title = "buffers (:b N)";
+    }
+
+    fn buffer_arg(mut self: &App, arg: string) -> void {
+        if (arg.len == 0) {
+            self.open_picker("buffers");
+            return;
+        }
+        if (str::eq(arg, "#")) {
+            if (self.alt >= 0) { self.switch_id(self.alt); }
+            return;
+        }
+        let all: BufInfo[] = self.infos();
+
+        for (let b: &BufInfo in &all) {
+            if (str::eq("\(b.id)", arg)) {
+                self.switch_id(b.id);
+                return;
+            }
+        }
+        var hit: i64 = -1;
+        var hits: i64 = 0;
+
+        for (let b: &BufInfo in &all) {
+            if (str::contains(b.name, arg)) {
+                hit = b.id;
+                hits += 1;
+            }
+        }
+        if (hits == 1) {
+            self.switch_id(hit);
+            return;
+        }
+        if (hits > 1) {
+            self.fail_msg("E93: More than one match for \(arg)");
+            return;
+        }
+        self.fail_msg("E94: No matching buffer for \(arg)");
+    }
+
+    fn set_cmd(mut self: &App, arg: string) -> void {
+        if (arg.len == 0 || str::eq(arg, "all")) {
+            var lines: string[] = [];
+
+            for (let o: string in &OPTIONS) { lines.push("  \(o)=\(self.cfg.get(o))"); }
+            self.panel = lines;
+            self.panel_title = "options";
+            return;
+        }
+
+        for (let word: string in str::fields(arg)) {
+            var name: string = word;
+            var value: string = "true";
+
+            if (let eq = str::find(word, "=")) {
+                name = str::substr(word, 0, eq);
+                value = str::substr(word, eq + 1, word.len - eq - 1);
+            } else if (str::ends_with(word, "?")) {
+                let nm: string = str::substr(word, 0, word.len - 1);
+
+                self.say("  \(nm)=\(self.cfg.get(nm))");
+                continue;
+            } else if (str::ends_with(word, "!")) {
+                name = str::substr(word, 0, word.len - 1);
+                if (str::eq(self.cfg.get(name), "true")) { value = "false"; }
+            } else if (str::starts_with(word, "no") &&
+                self.cfg.get(str::substr(word, 2, word.len - 2)).len > 0) {
+                name = str::substr(word, 2, word.len - 2);
+                value = "false";
+            } else if (str::starts_with(word, "inv")) {
+                name = str::substr(word, 3, word.len - 3);
+                if (str::eq(self.cfg.get(name), "true")) { value = "false"; }
+            }
+            let why: string = self.cfg.set(name, value);
+
+            if (why.len > 0) {
+                self.fail_msg("E518: \(why)");
+                return;
+            }
+            if (str::eq(name, "theme")) {
+                self.look = look(&self.cfg.themes, self.cfg.theme);
+                self.shape = -1;
+            }
+            if (str::eq(name, "tree")) {
+                if (self.cfg.tree) {
+                    self.split.at = self.cfg.tree_width;
+                } else {
+                    self.split.at = 0;
+                }
+            }
+            if (str::eq(name, "tree-width") && self.split.at > 0) {
+                self.split.at = self.cfg.tree_width;
+            }
+            if (str::eq(name, "tabstop") || str::eq(name, "ts")) {
+                self.b.tabstop = self.cfg.tabstop;
+            }
+        }
+    }
 
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
