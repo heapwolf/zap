@@ -107,6 +107,165 @@ export struct Loc {
     export message: string;
 }
 
+/// a background command: program, output so far
+export struct Job {
+    export name: string;
+    export cmd: Command;
+    export file: string;            // file it ran on
+    export out: str::Builder = str::Builder {};
+    export started: time::Instant;
+    child: process::Child[] = [];
+}
+
+/// result of one wait on a job
+export struct JobRead {
+    export data: string = "";
+    export done: bool = false;
+    export code: i64 = 0;
+}
+
+/// the editor
+export struct App {
+    export cfg: Config;
+    export look: Look;
+    export cwd: string;
+    // current buffer
+    export b: Buf = Buf { id: 0, name: "", text: MemLine {}, ft: cfgm::FileType { name: "" } };
+    export others: Buf[] = [];           // the rest, by id
+    export alt: i64 = -1;
+    export next_id: i64 = 1;
+    export tree: Tree;
+    export split: tui::SplitState;
+    export focus_tree: bool = false;
+    export mode: Mode = Mode::Normal;
+    export pending: string[] = [];
+    export cmd: tui::TextInput;
+    export cmd_kind: string = "";        // ":", "/" or "?"
+    export last_search: string = "";
+    export search_fwd: bool = true;
+    export hl: bool = false;                // last search's matches shown
+    export matcher: Matcher = Matcher {};
+    export msg: string = "";
+    export msg_error: bool = false;
+    export msg_until: i64 = 0;          // when it goes (ms since epoch; 0: at the next message)
+    export panel: string[] = [];
+    export panel_title: string = "";
+    export reg: string = "";
+    export reg_lines: bool = false;
+    export last_find: string = "";       // last f/t/F/T and its character (; and , repeat it)
+    export cols: i64 = 80;
+    export rows: i64 = 24;
+    export edit_h: i64 = 20;
+    export edit_w: i64 = 60;
+    export gutter: i64 = 0;
+    export tree_h: i64 = 20;
+    export vis: VisLine[] = [];
+    export tree_vis: VisRow[] = [];
+    export want_states: i64 = -1;   // line the background highlighter must reach
+    export jobs: Job[] = [];             // running command (one at a time)
+    export queue: string[] = [];         // commands queued behind it
+    export locs: Loc[] = [];
+    export loc_at: i64 = -1;
+    export picker: tui::PickerState;
+    export picking: string = "";         // "": no picker; "palette"
+    export pick_items: string[] = [];
+    export pick_values: string[] = [];
+    export cat: i64 = 0;                // palette category (CATEGORIES)
+    export shell_off: bool = false;      // no shell, as on AeOS (tests)
+    export prev_cwd: string = "";        // directory before the last :cd (for :cd -)
+    export files: string[] = [];         // project files (listed in background: walk_step)
+    file_names: string[] = [];          // each as the palette shows it (short_name)
+    files_root: string = "";            // directory files is of ("": not listed yet)
+    files_hidden: bool = false;         // and whether it has hidden files
+    export walking: bool = false;       // project listing in progress
+    walk_live: bool = false;            // listing straight into files (first listing)
+    walk_dirs: string[] = [];           // directories the walk is in, outermost first
+    walk_names: string[][] = [];        // entries of each
+    walk_next: i64[] = [];              // next entry of each
+    walk_out: string[] = [];            // what a relisting found (becomes files when done)
+    pick_gen: i64 = 0;                  // pick_items replaced (not just grown)
+    export shown: string[] = [];         // what the picker shows: best matches, at most SHOWN_MAX
+    shown_at: i64[] = [];               // index of each in pick_items
+    match_at: i64[] = [];               // every item the query matches, in order
+    match_score: i64[] = [];
+    match_query: string = "";
+    match_upto: i64 = 0;                // items checked so far
+    match_gen: i64 = -1;                // pick_gen when matched
+    export grep_query: string = "";      // project search query ("": none)
+    export grep_at: i64 = 0;            // next file it reads
+    export symbols: string[] = [];       // aec outline's declarations (shown, then where)
+    export symbol_at: string[] = [];
+    export symbols_asked: bool = false;
+    export quit: bool = false;
+    export shape: i64 = -1;         // cursor shape last set
+    export splash: bool = false;            // started with no file: intro shows (until an edit)
+    export vkind: i64 = 0;              // visual selection: 1 characters, 2 lines, 3 block
+    export vy: i64 = 0;                 // its other end (the cursor is one end)
+    export vx: i64 = 0;
+    export gv: i64[] = [];               // last selection: kind, vy, vx, cy, cx (gv, '< '>)
+    export blk: i64[] = [];              // block insert: y1, y2, column, start byte, pad (Esc fills
+                                         //   the rest)
+    export dragging: bool = false;          // mouse is selecting
+    export clicks: i64 = 0;             // 1, 2 (word), 3 (line): presses close together
+    export click_ms: i64 = 0;
+    export click_y: i64 = 0;
+    export press_y: i64 = 0;
+    export press_x: i64 = 0;
+    export edit_x: i64 = 0;             // editor window's first screen column
+    export clips: string[] = [];         // text to send to the terminal's clipboard (OSC 52)
+    export native_clip: bool = false;       // also yank to the system clipboard (pbcopy, wl-copy,
+                                            //   xclip)
+    gits: GitAsk[] = [];                // git requests, for signs (one per buffer)
+    copiers: process::Child[] = [];      // running clipboard programs, to reap
+    export persist: bool = false;           // keep history on disk (undo files, command-line
+                                            //   history)
+    export hist_cmd: string[] = [];      // command-line history (:)
+    export hist_search: string[] = [];   // search history (/ ?)
+    export wild: string[] = [];          // command-line completions (Tab cycles them)
+    export wild_at: i64 = 0;            // the one now in the command line
+    export wild_head: string = "";       // text before the word they complete
+    export wild_text: string = "";       // command line as Tab left it (else: new completions)
+    export comp: CompItem[] = [];        // insert-mode completions of the typed word
+    export comp_at: i64 = 0;            // chosen one (Enter inserts it)
+    export comp_doc: string[] = [];      // its doc comment (read from its file)
+    export index: Index = Index {};            // aec outline's declarations (completion, palette)
+    export index_stale: bool = true;    // needs rereading (a file was written)
+    export index_quiet: bool = false;       // read for completion: no message when done
+    export comp_prefix: string = "";     // what was typed
+    export comp_y: i64 = 0;             // where the word starts
+    export comp_x: i64 = 0;
+    export sheet_vis: SheetVis = SheetVis {};     // spreadsheet window, ready to paint
+    export cell_r: i64 = 0;             // cell the command line edits (cmd_kind "cell")
+    export cell_c: i64 = 0;
+    export sizing: i64 = -1;        // column an edge drag resizes (-1: none)
+    export sheet_block: string[][] = []; // cells yanked from a selection (p puts them)
+    sheet_drag: i64 = 0;                // what a drag selects: 1 cells, 2 rows, 3 columns
+    export viewer: Viewer[] = [];        // mermaid diagram drawn in the text's place (empty: text
+                                         //   shows)
+    wheel_dir: i64 = 0;                 // last wheel turn: direction (-1, 1; 2 or -2 sideways),
+    wheel_ms: i64 = 0;                  // time, speed (hundredths; 100 slowest),
+    wheel_speed: i64 = 0;               // and leftover fraction of a cell
+    wheel_rest: i64 = 0;
+    hl_id: i64 = -1;                    // highlight cache: buffer,
+    hl_gen: i64 = -1;                   // text generation, syntax,
+    hl_lang: string = "";
+    hl_from: i64 = -1;                  // first line (-1: empty)
+    hl_rows: Hl[][] = [];               // each line's highlights
+    hl_after: i64[] = [];               // and the state after each
+    hold_key: string = "";              // last sideways key pressed (keyaccel),
+    hold_ms: i64 = 0;                   // time, repeats in a row,
+    hold_n: i64 = 0;                    // and leftover fraction of a step
+    hold_rest: i64 = 0;
+    export key_ms: i64 = -1;            // (tests: a key's time in ms; -1: the clock's)
+    sheet_rest: i64 = 0;                // sheet's leftover sideways cells, short of a column
+    seen_cy: i64 = -1;              // cursor position when the view last followed it
+    seen_cx: i64 = -1;              // (a sideways wheel moves the view, not the cursor)
+    seen_id: i64 = -1;
+    export diagram_vis: DiagramVis = DiagramVis {}; // diagram window, ready to paint
+    sizing_x: i64 = 0;                  // drag start, and the column's width then
+    sizing_w: i64 = 0;
+}
+
 /// a mermaid diagram drawn in place of the text: source, zoom, window position
 export struct Viewer {
     export line: i64;               // a line of its source (Markdown block's; .mmd file: 0)
