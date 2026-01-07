@@ -118,3 +118,61 @@ async fn main(args: string[]) -> i32 {
             return 1;
         }
     };
+
+    app.cols = ui.cols;
+    app.rows = ui.rows;
+
+    while (!app.quit) {
+        app.prepare();
+        tui::frame(mut &ui, mut &app);
+        shape(mut &app);
+
+        // send to the terminal's clipboard (OSC 52)
+        for (let c: string in &app.clips) { print(c); }
+        app.clips.clear();
+        if (app.busy() && app.has_work()) {
+            select {
+                let e = await ui.event() => { on_event(mut &ui, mut &app, e); },
+                let r = await editor::job_read(mut &app.jobs[0]) => { app.job_output(r); },
+
+                await std::sleep(0ms) => { app.background(); },
+            }
+        } else if (app.busy()) {
+            select {
+                let e = await ui.event() => { on_event(mut &ui, mut &app, e); },
+                let r = await editor::job_read(mut &app.jobs[0]) => { app.job_output(r); },
+
+                await std::sleep(100ms) => {},
+            }
+        } else if (app.has_work()) {
+            select {
+                let e = await ui.event() => { on_event(mut &ui, mut &app, e); },
+
+                await std::sleep(0ms) => { app.background(); },
+            }
+        } else if (app.polling()) {
+            // (git replying, or signs due once typing pauses: check again soon)
+            select {
+                let e = await ui.event() => { on_event(mut &ui, mut &app, e); },
+
+                await std::sleep(20ms) => {},
+            }
+        } else if (app.msg_wait() >= 0) {
+            // (a message is showing: redraw when it expires)
+            let wait: i64 = app.msg_wait();
+
+            select {
+                let e = await ui.event() => { on_event(mut &ui, mut &app, e); },
+
+                await std::sleep(wait * 1ms) => {},
+            }
+        } else {
+            let e: tui::Event = await ui.event();
+
+            on_event(mut &ui, mut &app, e);
+        }
+    }
+    ui.close();
+    print("\x1b[0 q\x1b]112\x07");
+    return 0;
+}
