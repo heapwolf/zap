@@ -1,0 +1,113 @@
+//! zap's undo history: every change made to a buffer, as a tree. Undo
+//! goes to the parent state, redo to the child last left; a change after an
+//! undo starts a branch and the old one stays (`g-` and `g+` walk every
+//! state in creation order, `:earlier` and `:later` by count or time).
+//! Nothing is dropped.
+//!
+//! The history is written to an undo file (in `~/.local/state/zap/undo/`)
+//! when the buffer is written, with the file's size and time; opening a file
+//! that still matches them reads it back, so history outlives the editor.
+
+import str from "std/string";
+import fs from "std/fs";
+import path from "std/path";
+import state from "state.ae";
+
+/// an edit: 0 line changed old -> new; 1 line new inserted; 2 line old removed
+export struct Op {
+    export kind: i64;
+    export line: i64;
+    export old: string = "";
+    export new: string = "";
+}
+
+/// one command's edits: the state it made, from state parent (0: the file
+/// as read); the cursor before and after; when (seconds since 1970); the
+/// child a redo goes to (0: none)
+export struct Change {
+    export ops: Op[] = [];
+    export parent: i64 = 0;
+    export child: i64 = 0;
+    export cy: i64 = 0;
+    export cx: i64 = 0;
+    export ay: i64 = 0;
+    export ax: i64 = 0;
+    export time: i64 = 0;
+}
+
+/// the tree: state k (1..) is what change k made (nodes[k - 1]); at: the
+/// buffer's current state; saved: the state its file has; root_next: the
+/// child of state 0 a redo goes to
+export struct History {
+    export nodes: Change[] = [];
+    export at: i64 = 0;
+    export saved: i64 = 0;
+    export root_next: i64 = 0;
+}
+
+impl History {
+    /// state k's parent (0 for 0)
+    export fn parent(self: &History, k: i64) -> i64 {
+        if (k <= 0) {
+            return 0;
+        }
+        return self.nodes[k - 1].parent;
+    }
+
+    /// the child of state k a redo goes to (0: none)
+    export fn next_of(self: &History, k: i64) -> i64 {
+        if (k == 0) {
+            return self.root_next;
+        }
+        return self.nodes[k - 1].child;
+    }
+
+    /// set state k's redo child to c
+    export fn set_next(mut self: &History, k: i64, c: i64) -> void {
+        if (k == 0) {
+            self.root_next = c;
+        } else {
+            self.nodes[k - 1].child = c;
+        }
+    }
+
+    /// the path from state at to state to: states to undo (each to its
+    /// parent, in order), then states to redo (in order)
+    export fn way(self: &History, to: i64) -> (i64[], i64[]) {
+        // (a parent is always older than its child, so the later of the two
+        // steps up until they meet at their nearest common ancestor: cost is
+        // the history's depth, not its square)
+        var undo: i64[] = [];
+        var down: i64[] = [];
+        var a: i64 = self.at;
+        var b: i64 = to;
+
+        while (a != b) {
+            if (a > b) {
+                undo.push(a);
+                a = self.parent(a);
+            } else {
+                down.push(b);
+                b = self.parent(b);
+            }
+        }
+        var redo: i64[] = [];
+        var k: i64 = down.len - 1;
+
+        while (k >= 0) {
+            redo.push(down[k]);
+            k -= 1;
+        }
+        return (undo, redo);
+    }
+
+    /// latest state made at or before time t (seconds; 0: none)
+    export fn before(self: &History, t: i64) -> i64 {
+        var best: i64 = 0;
+
+        for (let k: i64, let c: &self::&Change in &self.nodes) {
+            if (c.time <= t) { best = k + 1; }
+        }
+        return best;
+    }
+}
