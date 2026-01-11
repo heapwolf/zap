@@ -338,6 +338,107 @@ impl Matcher {
         self.cx = c.cx;
     }
 
+    // fix the cursor and modified flag after moving through the history
+    fn moved(mut self: &Buf) -> void {
+        self.modified = self.hist.at != self.hist.saved;
+        self.clamp();
+    }
+
+    /// undo the last change -> was there one?
+    export fn undo_last(mut self: &Buf) -> bool {
+        self.commit();
+        if (self.hist.at == 0) {
+            return false;
+        }
+        self.back_out(self.hist.at);
+        self.moved();
+        return true;
+    }
+
+    /// redo the last undone change -> was there one?
+    export fn redo_last(mut self: &Buf) -> bool {
+        self.commit();
+        let k: i64 = self.hist.next_of(self.hist.at);
+
+        if (k == 0) {
+            return false;
+        }
+        self.redo_state(k);
+        self.moved();
+        return true;
+    }
+
+    /// move to state k (0: the file as first read; states are numbered in
+    /// creation order) -> did it move?
+    export fn go_to(mut self: &Buf, k: i64) -> bool {
+        self.commit();
+        var to: i64 = k;
+
+        if (to < 0) { to = 0; }
+        if (to > self.hist.nodes.len) { to = self.hist.nodes.len; }
+        if (to == self.hist.at) {
+            return false;
+        }
+        let (ups, downs) = self.hist.way(to);
+
+        for (let u: i64 in &ups) { self.back_out(u); }
+
+        for (let d: i64 in &downs) {
+            self.redo_state(d);
+            self.cy = self.hist.nodes[d - 1].ay;
+            self.cx = self.hist.nodes[d - 1].ax;
+        }
+        self.moved();
+        return true;
+    }
+
+    /// when state k was made (seconds since 1970; state 0: the first
+    /// change's time; 0 if there are none)
+    export fn made(self: &Buf, k: i64) -> i64 {
+        if (self.hist.nodes.len == 0 || k > self.hist.nodes.len) {
+            return 0;
+        }
+        if (k <= 0) {
+            return self.hist.nodes[0].time;
+        }
+        return self.hist.nodes[k - 1].time;
+    }
+
+    /// move to secs seconds before the current state was made -> did it move?
+    export fn earlier_by(mut self: &Buf, secs: i64) -> bool {
+        self.commit();
+        let t: i64 = self.made(self.hist.at) - secs;
+        var to: i64 = self.hist.before(t);
+
+        if (to > self.hist.at) { to = self.hist.at; }
+        return self.go_to(to);
+    }
+
+    /// move to secs seconds after the current state was made (the last
+    /// state made by then) -> did it move?
+    export fn later_by(mut self: &Buf, secs: i64) -> bool {
+        self.commit();
+        let t: i64 = self.made(self.hist.at) + secs;
+        var to: i64 = self.hist.before(t);
+
+        if (to < self.hist.at) { to = self.hist.at; }
+        return self.go_to(to);
+    }
+
+    /// keep the cursor on a line and on a character in it
+    export fn clamp(mut self: &Buf) -> void {
+        if (self.cy >= self.text.count) { self.cy = self.text.count - 1; }
+        if (self.cy < 0) { self.cy = 0; }
+        let l: string = self.text.get(self.cy);
+
+        if (self.cx > l.len) { self.cx = l.len; }
+        if (self.cx < 0) { self.cx = 0; }
+
+        while (self.cx > 0 && self.cx < l.len && cont(l[self.cx])) { self.cx -= 1; }
+    }
+
+    // ---- text ----------------------------------------------------------------------
+
     /// insert text at line y, byte x (newlines split the line) -> where it
     /// ends (line, byte)
     export fn put(mut self: &Buf, y: i64, x: i64, text: string) -> (i64, i64) {
