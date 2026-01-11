@@ -228,6 +228,116 @@ impl Matcher {
         return self.find_plain(s, start);
     }
 
+    // record op (in its own change if none is open)
+    fn record(mut self: &Buf, op: Op) -> void {
+        if (self.changing) {
+            // (a line set again in the same change, as when typing: update the
+            // previous op's new text instead of adding one op per key)
+            let n: i64 = self.cur.ops.len;
+
+            if (op.kind == 0 && n > 0 && self.cur.ops[n - 1].line == op.line &&
+                self.cur.ops[n - 1].kind <= 1) {
+                self.cur.ops[n - 1].new = op.new;
+                return;
+            }
+            self.cur.ops.push(op);
+            return;
+        }
+        self.begin();
+        self.cur.ops.push(op);
+        self.commit();
+    }
+
+    /// set line i to s
+    export fn set_line(mut self: &Buf, i: i64, s: string) -> void {
+        if (self.readonly) {
+            self.refused = true;
+            return;
+        }
+        let old: string = self.text.get(i);
+
+        if (str::eq(old, s)) {
+            return;
+        }
+        self.text.set(i, s);
+        self.touched(i);
+        self.record(Op { kind: 0, line: i, old: old, new: s });
+    }
+
+    /// insert s as line i
+    export fn insert_line(mut self: &Buf, i: i64, s: string) -> void {
+        if (self.readonly) {
+            self.refused = true;
+            return;
+        }
+        self.text.insert(i, s);
+        self.touched(i);
+        self.record(Op { kind: 1, line: i, new: s });
+    }
+
+    /// remove line i (the last remaining line becomes empty instead)
+    export fn remove_line(mut self: &Buf, i: i64) -> void {
+        if (self.readonly) {
+            self.refused = true;
+            return;
+        }
+        if (self.text.count == 1) {
+            self.set_line(0, "");
+            return;
+        }
+        let old: string = self.text.get(i);
+
+        self.text.remove(i);
+        self.touched(i);
+        self.record(Op { kind: 2, line: i, old: old });
+    }
+
+    // undo state k: the buffer moves to its parent
+    fn back_out(mut self: &Buf, k: i64) -> void {
+        let c: Change = std::copy(self.hist.nodes[k - 1]);
+        var j: i64 = c.ops.len - 1;
+
+        while (j >= 0) {
+            let op: &c::&Op = &c.ops[j];
+
+            j -= 1;
+            if (op.kind == 0) {
+                self.text.set(op.line, op.old);
+            } else if (op.kind == 1) {
+                self.text.remove(op.line);
+            } else {
+                self.text.insert(op.line, op.old);
+            }
+            self.touched(op.line);
+        }
+        let parent: i64 = c.parent;
+
+        self.hist.set_next(parent, k);
+        self.hist.at = parent;
+        self.cy = c.cy;
+        self.cx = c.cx;
+    }
+
+    // redo state k: the buffer moves to it from its parent
+    fn redo_state(mut self: &Buf, k: i64) -> void {
+        let c: Change = std::copy(self.hist.nodes[k - 1]);
+
+        for (let op: &c::&Op in &c.ops) {
+            if (op.kind == 0) {
+                self.text.set(op.line, op.new);
+            } else if (op.kind == 1) {
+                self.text.insert(op.line, op.new);
+            } else {
+                self.text.remove(op.line);
+            }
+            self.touched(op.line);
+        }
+        self.hist.set_next(c.parent, k);
+        self.hist.at = k;
+        self.cy = c.cy;
+        self.cx = c.cx;
+    }
+
     /// insert text at line y, byte x (newlines split the line) -> where it
     /// ends (line, byte)
     export fn put(mut self: &Buf, y: i64, x: i64, text: string) -> (i64, i64) {
