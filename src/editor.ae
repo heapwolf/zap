@@ -2238,6 +2238,119 @@ impl App {
         return 1;
     }
 
+    /// opens the help as a read-only buffer (at topic's section, if any)
+    export fn help(mut self: &App, topic: string) -> void {
+        self.show_scratch("help", HELP);
+        self.b.ft = self.cfg.filetype("help.md");
+        self.b.readonly = true;
+        var y: i64 = 0;
+
+        if (topic.len > 0) {
+            let want: string = str::to_lower(topic);
+            var found: i64 = -1;
+
+            // a heading naming it, else any line
+            for (let i: i64 in 0..self.b.text.count) {
+                let l: string = str::to_lower(self.b.text.get(i));
+
+                if (found < 0 && str::starts_with(l, "#") && str::contains(l, want)) { found = i; }
+            }
+
+            for (let i: i64 in 0..self.b.text.count) {
+                if (found < 0 && str::contains(str::to_lower(self.b.text.get(i)), want)) {
+                    found = i;
+                }
+            }
+            if (found < 0) {
+                self.fail_msg("E149: no help for \(topic)");
+            } else {
+                y = found;
+            }
+        }
+        self.go(y, 0, true);
+        self.b.top = y;
+    }
+
+    // reports the current history state as a message
+    fn say_state(mut self: &App) -> void {
+        let at: i64 = self.b.hist.at;
+        let n: i64 = self.b.hist.nodes.len;
+        var when: string = "the file as read";
+
+        if (at > 0) { when = ago(time::since_epoch() / 1s - self.b.made(at)); }
+        self.say("state \(at) of \(n): \(when)");
+    }
+
+    fn start_insert(mut self: &App) -> void {
+        self.b.begin();
+        self.mode = Mode::Insert;
+    }
+
+    // joins line y and the next `times` lines, with a space between
+    fn join_lines(mut self: &App, y: i64, times: i64) -> void {
+        if (y + 1 >= self.b.text.count) {
+            return;
+        }
+        self.b.begin();
+
+        for (let k: i64 in 0..times) {
+            if (y + 1 >= self.b.text.count) { break; }
+            let l: string = self.b.text.get(y);
+            let nl: string = str::trim_start(self.b.text.get(y + 1));
+            var sep: string = " ";
+
+            if (l.len == 0 || nl.len == 0 || str::ends_with(l, " ")) { sep = ""; }
+            self.b.set_line(y, "\(l)\(sep)\(nl)");
+            self.b.remove_line(y + 1);
+            self.b.cy = y;
+            self.b.cx = l.len;
+        }
+        self.b.commit();
+    }
+
+    /// sends text to the terminal's clipboard (if the clipboard option is on)
+    /// and the system's (native_clip: zap runs on this machine, not over ssh)
+    export fn clip(mut self: &App, text: string) -> void {
+        self.reap_copiers();
+        if (!self.cfg.clipboard || text.len == 0) {
+            return;
+        }
+        // (terminals take up to about 100 KB; an argument, 128 KB)
+        if (text.len > 74994) {
+            return;
+        }
+        // OSC 52: only some terminals take it (iTerm2 when allowed, kitty,
+        // WezTerm, Ghostty, foot, Alacritty; not Terminal.app or VTE's)
+        self.clips.push("\x1b]52;c;\(enc::base64(text))\x07");
+        if (self.native_clip) { self.copy_native(text); }
+    }
+
+    // copies text to the system clipboard: the first of pbcopy, wl-copy,
+    // xclip, xsel, via a shell, with the text as its argument
+    fn copy_native(mut self: &App, text: string) -> void {
+        let parts: string[] = [
+            "if command -v pbcopy >/dev/null 2>&1; then printf %s \"$1\" | pbcopy;",
+            "elif [ -n \"$WAYLAND_DISPLAY\" ] && command -v wl-copy >/dev/null 2>&1; then",
+            "printf %s \"$1\" | wl-copy;",
+            "elif [ -n \"$DISPLAY\" ] && command -v xclip >/dev/null 2>&1; then",
+            "printf %s \"$1\" | xclip -selection clipboard;",
+            "elif [ -n \"$DISPLAY\" ] && command -v xsel >/dev/null 2>&1; then",
+            "printf %s \"$1\" | xsel --clipboard --input; fi"
+        ];
+        let script: string = str::join(&parts, " ");
+        let cmd: process::Command = process::Command {
+            program: "sh", args: ["-c", script, "sh", text], stdin: process::Stdio::Null,
+            stdout: process::Stdio::Null, stderr: process::Stdio::Null
+        };
+
+        match (process::start(&cmd)) {
+            child => { self.copiers.push(child); },
+            e: process::NotFound => {},
+            e2: process::PermissionDenied => {},
+            e3: process::SpawnError => {}
+        }
+    }
+
     fn insert_edit(mut self: &App, t: &string, k: &tui::Key) -> void {
         self.b.begin();
         match (*t) {
