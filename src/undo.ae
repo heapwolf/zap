@@ -111,3 +111,113 @@ impl History {
         return best;
     }
 }
+
+// ---- the undo file ---------------------------------------------------------------
+
+/// where file p's history is stored
+export fn file_for(p: string) -> string {
+    return "\(state::dir("undo"))/\(state::flat(p))";
+}
+
+/// h as undo file text, for a file of size bytes modified at mtime (ns)
+export fn encode(h: &History, size: i64, mtime: i64) -> string {
+    var b: str::Builder;
+
+    b.add("zap-undo 1\n\(size) \(mtime) \(h.at) \(h.saved) \(h.root_next) \(h.nodes.len)\n");
+
+    for (let c: &h::&Change in &h.nodes) {
+        b.add("\(c.parent) \(c.child) \(c.cy) \(c.cx) \(c.ay) \(c.ax) \(c.time) \(c.ops.len)\n");
+
+        for (let o: &c::&Op in &c.ops) {
+            b.add("\(o.kind) \(o.line) \(o.old.len) \(o.new.len)\n");
+            b.add(o.old);
+            b.add(o.new);
+            b.add_byte(10);
+        }
+    }
+    return b.to_string();
+}
+
+/// the text is not an undo file (or not for this file)
+export failure BadUndo { why: string; }
+
+// reader over an undo file's text
+struct Reader {
+    at: i64;
+}
+
+// the numbers on the next line (want of them)
+fn numbers(t: &string, mut r: &Reader, want: i64) -> i64[] | BadUndo {
+    let end: i64 = str::find_from(*t, "\n", r.at) ?? -1;
+
+    if (end < 0) { fail BadUndo { why: "cut short" }; }
+    let words: string[] = str::fields(str::substr(*t, r.at, end - r.at));
+
+    r.at = end + 1;
+    if (words.len != want) {
+        fail BadUndo { why: "a line of \(words.len) numbers, not \(want)" };
+    }
+    var out: i64[] = [];
+
+    for (let w: string in &words) {
+        match (str::parse_int(w)) {
+            n => { out.push(n); },
+            e: str::BadInt => { fail BadUndo { why: "not a number: \(w)" }; }
+        }
+    }
+    return out;
+}
+
+// the next n bytes
+fn bytes(t: &string, mut r: &Reader, n: i64) -> string | BadUndo {
+    if (n < 0 || r.at + n > t.len) { fail BadUndo { why: "cut short" }; }
+    let s: string = str::substr(*t, r.at, n);
+
+    r.at += n;
+    return s;
+}
+
+/// the history in undo file text, if written for a file of size bytes
+/// modified at mtime (ns)
+export fn decode(t: string, size: i64, mtime: i64) -> History | BadUndo {
+    if (!str::starts_with(t, "zap-undo 1\n")) { fail BadUndo { why: "not an undo file" }; }
+    var r: Reader = Reader { at: 11 };
+    let head: i64[] = numbers(&t, mut &r, 6)?;
+
+    if (head[0] != size || head[1] != mtime) { fail BadUndo { why: "the file changed since" }; }
+    var h: History = History { at: head[2], saved: head[3], root_next: head[4] };
+    let n: i64 = head[5];
+
+    for (let k: i64 in 0..n) {
+        let c: i64[] = numbers(&t, mut &r, 8)?;
+        var ch: Change = Change {
+            parent: c[0], child: c[1], cy: c[2], cx: c[3], ay: c[4], ax: c[5], time: c[6]
+        };
+
+        if (ch.parent < 0 || ch.parent > k || ch.child < 0 || ch.child > n) {
+            fail BadUndo { why: "a state out of the tree" };
+        }
+
+        for (let j: i64 in 0..c[7]) {
+            let o: i64[] = numbers(&t, mut &r, 4)?;
+            let old: string = bytes(&t, mut &r, o[2])?;
+            let new: string = bytes(&t, mut &r, o[3])?;
+
+            bytes(&t, mut &r, 1)?;
+            ch.ops.push(Op { kind: o[0], line: o[1], old: old, new: new });
+        }
+        h.nodes.push(ch);
+    }
+    if (h.at < 0 || h.at > n || h.saved < 0 || h.saved > n || h.root_next > n) {
+        fail BadUndo { why: "a state out of the tree" };
+    }
+    return h;
+}
+
+/// write h as file p's undo file (p: size bytes, modified at mtime) -> did it work?
+export fn save(h: &History, p: string, size: i64, mtime: i64) -> bool {
+    let u: string = file_for(p);
+
+    state::ensure_dir(path::dir(u));
+    return fs::write_file(u, encode(h, size, mtime));
+}
