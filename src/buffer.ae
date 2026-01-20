@@ -535,3 +535,73 @@ impl Matcher {
 
     /// do the saved states reach line i?
     export fn reaches(self: &Buf, i: i64) -> bool { return i / STEP < self.valid; }
+
+    /// load the history saved for its file, if the file is as it was then
+    /// -> was it?
+    export fn recall_history(mut self: &Buf) -> bool {
+        if (self.text.file.len == 0 || self.modified) {
+            return false;
+        }
+        if (let h = undo::load(self.path, self.text.stamp, self.text.stamp_time / 1ns)) {
+            self.hist = h;
+            self.hist.at = self.hist.saved;
+            return true;
+        }
+        return false;
+    }
+
+    /// reread its file (changes lost; undo history cleared)
+    export fn reload(mut self: &Buf) -> void | fs::NotFound | fs::PermissionDenied |
+        fs::IsADirectory | fs::IoError {
+        if (self.path.len == 0) {
+            return;
+        }
+        let m: MemLine = ml::open(self.path)?;
+
+        self.text.close();
+        self.text = m;
+        self.gen += 1;
+        self.modified = false;
+        self.hist = History {};
+        self.states = [0];
+        self.valid = 1;
+        self.clamp();
+    }
+}
+
+#test fn edits_and_undoes() -> i32 {
+    var b: Buf = scratch(1, "t", "one\ntwo\nthree\n");
+
+    b.begin();
+    b.put(1, 1, "X\nY");
+    b.commit();
+    if (b.lines() != 4 || !str::eq(b.line(1), "tX") || !str::eq(b.line(2), "Ywo")) {
+        return 1;
+    }
+    b.begin();
+    let gone: string = b.cut(0, 1, 2, 1);
+
+    b.commit();
+    if (!str::eq(gone, "ne\ntX\nY") || !str::eq(b.line(0), "owo") || b.lines() != 2) {
+        return 2;
+    }
+    if (!b.undo_last() || b.lines() != 4 || !str::eq(b.line(2), "Ywo")) {
+        return 3;
+    }
+    if (!b.undo_last() || !str::eq(b.text.text(), "one\ntwo\nthree\n")) {
+        return 4;
+    }
+    if (b.undo_last()) {
+        return 5;
+    }
+    if (!b.redo_last() || !str::eq(b.line(1), "tX")) {
+        return 6;
+    }
+    if (!b.redo_last() || !str::eq(b.line(0), "owo")) {
+        return 7;
+    }
+    return 0;
+}
+
+#test fn keeps_every_branch() -> i32 {
+    var b: Buf = scratch(1, "t", "a\n");
