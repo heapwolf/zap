@@ -605,3 +605,71 @@ impl Matcher {
 
 #test fn keeps_every_branch() -> i32 {
     var b: Buf = scratch(1, "t", "a\n");
+
+    b.set_line(0, "b");                     // state 1
+    b.set_line(0, "c");                     // state 2
+    if (!b.undo_last() || !str::eq(b.line(0), "b")) {
+        return 1;
+    }
+    b.insert_line(1, "d");                  // state 3, a branch from 1
+    if (b.lines() != 2 || b.hist.at != 3) {
+        return 2;
+    }
+    if (!b.go_to(2) || b.lines() != 1 || !str::eq(b.line(0), "c")) {
+        return 3;
+    }
+    if (!b.go_to(0) || !str::eq(b.text.text(), "a\n") || b.modified) {
+        return 4;
+    }
+    if (!b.go_to(3) || !str::eq(b.line(1), "d")) {
+        return 5;
+    }
+    // redo follows the branch last left
+    b.undo_last();
+    b.undo_last();
+    if (!b.redo_last() || !b.redo_last() || b.hist.at != 3) {
+        return 6;
+    }
+    return 0;
+}
+
+#test fn finds_matches() -> i32 {
+    var b: Buf = scratch(1, "t", "alpha Beta\ngamma beta\nnone\n");
+    let m: Matcher = matcher("beta", false, true, true);
+
+    b.cy = 0;
+    b.cx = 0;
+    if (let at = b.search(&m, true)) {
+        let (y, x) = at;
+
+        if (y != 0 || x != 6) {
+            return 1;
+        }
+    } else {
+        return 2;
+    }
+    let exact: Matcher = matcher("Beta", false, true, true);
+
+    b.cy = 1;
+    if (let at = b.search(&exact, true)) {
+        let (y, x) = at;
+
+        if (y != 0) {
+            return 3;
+        }
+    } else {
+        return 4;
+    }
+    let re: Matcher = matcher("g.m+a", true, true, true);
+    let l: string = b.line(1);
+
+    if (re.all(&l).len != 2) {
+        return 5;
+    }
+    let tab: string = "\tab";
+
+    if (col_of(&tab, 1, 4) != 4 || byte_at(&tab, 5, 4) != 2) {
+        return 6;
+    }
+    return 0;
+}
