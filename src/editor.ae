@@ -2963,6 +2963,201 @@ impl App {
             "ene" | "enew" => {
                 var nb: Buf = bufm::scratch(self.next_id, "", "");
 
+                nb.scratch = false;
+                let id: i64 = nb.id;
+
+                self.others.push(nb);
+                self.next_id += 1;
+                self.switch_id(id);
+            },
+            "ls" | "buffers" | "files" => { self.list_buffers(); },
+            "b" | "buffer" => { self.buffer_arg(arg); },
+            "bn" | "bnext" => {
+                let ids: i64[] = self.ids();
+
+                for (let k: i64, let id: i64 in &ids) {
+                    if (id == self.b.id) {
+                        let to: i64 = ids[(k + 1) % ids.len];
+
+                        self.switch_id(to);
+                        break;
+                    }
+                }
+            },
+            "bp" | "bprevious" | "bN" | "bNext" => {
+                let ids: i64[] = self.ids();
+                let n: i64 = ids.len;
+
+                for (let k: i64, let id: i64 in &ids) {
+                    if (id == self.b.id) {
+                        let to: i64 = ids[(k - 1 + n) % n];
+
+                        self.switch_id(to);
+                        break;
+                    }
+                }
+            },
+            "bd" | "bdelete" | "bw" | "bwipeout" => {
+                var id: i64 = self.b.id;
+                var modified: bool = self.b.modified && !self.b.scratch;
+
+                if (arg.len > 0) {
+                    id = -1;
+                    if (str::eq("\(self.b.id)", arg) || str::eq(self.b.name, arg)) {
+                        id = self.b.id;
+                    }
+
+                    for (let o: &self::&Buf in &self.others) {
+                        if (str::eq("\(o.id)", arg) || str::eq(o.name, arg)) {
+                            id = o.id;
+                            modified = o.modified && !o.scratch;
+                        }
+                    }
+                    if (id < 0) {
+                        self.fail_msg("E94: No matching buffer for \(arg)");
+                        return;
+                    }
+                }
+                if (modified && !bang) {
+                    self.fail_msg(
+                        "E89: No write since last change for buffer \(id) (add ! to override)"
+                    );
+                    return;
+                }
+                self.close_id(id);
+            },
+            "set" | "se" => { self.set_cmd(arg); },
+            "noh" | "nohlsearch" => { self.hl = false; },
+            "theme" | "colorscheme" | "colo" => {
+                if (arg.len == 0) {
+                    let names: string[] = self.theme_names();
+
+                    self.say("theme \(self.cfg.theme) (of \(str::join(&names, ", ")))");
+                    return;
+                }
+                let why: string = self.cfg.set("theme", arg);
+
+                if (why.len > 0) {
+                    self.fail_msg(why);
+                    return;
+                }
+                self.look = look(&self.cfg.themes, self.cfg.theme);
+                self.shape = -1;
+            },
+            "sheet" => { self.sheet_ex(arg); },
+            "mermaid" => { self.toggle_viewer(); },
+            "tree" | "Tree" | "NvimTreeToggle" => {
+                if (str::eq(arg, "focus")) {
+                    self.focus_on_tree();
+                } else if (str::eq(arg, "reveal")) {
+                    self.focus_on_tree();
+                } else if (str::eq(arg, "refresh")) {
+                    self.tree.refresh();
+                } else if (self.split.at > 0) {
+                    self.split.at = 0;
+                    self.focus_tree = false;
+                } else {
+                    self.split.at = self.cfg.tree_width;
+                }
+            },
+            "focus" => { self.focus_cmd(arg); },
+            "reload" | "source" | "so" => { self.reload_config(); },
+            "trust" => {
+                var p: string = arg;
+
+                if (p.len == 0) { p = self.cfg.untrusted; }
+                if (p.len == 0) { p = self.cfg.local; }
+                if (p.len == 0) {
+                    self.fail_msg("no local init.zap here");
+                    return;
+                }
+                if (!path::is_absolute(p)) { p = path::join(self.cwd, p); }
+                if (!cfgm::trust(p)) {
+                    self.fail_msg("cannot write the trust list");
+                    return;
+                }
+                self.reload_config();
+            },
+            "defaults" => { self.show_scratch("[defaults]", DEFAULTS); },
+            "config" => {
+                var p: string = config_path();
+
+                if (self.cfg.local.len > 0) { p = self.cfg.local; }
+                self.edit(p);
+                if (self.b.text.count == 1 && self.b.text.get(0).len == 0) {
+                    self.b.begin();
+                    self.b.put(0, 0, STARTER);
+                    self.b.commit();
+                }
+            },
+            "cn" | "cnext" | "cp" | "cprevious" | "cN" | "cNext" | "cc" => {
+                if (self.locs.len == 0) {
+                    self.fail_msg("E42: No Errors");
+                    return;
+                }
+                var at: i64 = self.loc_at;
+
+                if (str::eq(name, "cn") || str::eq(name, "cnext")) { at += 1; }
+                else if (str::eq(name, "cc")) { if (at < 0) { at = 0; } }
+                else { at -= 1; }
+                if (at >= self.locs.len) { at = self.locs.len - 1; }
+                if (at < 0) { at = 0; }
+                self.jump_loc(at);
+            },
+            "cl" | "clist" | "copen" | "cope" => {
+                var lines: string[] = [];
+
+                for (let i: i64, let l: &self::&Loc in &self.locs) {
+                    lines.push(" \(i + 1) \(short_name(self.cwd, l.file)):\(l.line):\(l.col): \(l.message)"
+                    );
+                }
+                if (lines.len == 0) { lines.push("no locations"); }
+                self.panel = lines;
+                self.panel_title = "locations (:cnext, :cprev)";
+            },
+            "find" | "fin" => { self.open_picker("files"); },
+            "palette" | "pick" => { self.open_picker(arg); },
+            "cd" | "chdir" => { self.change_dir(arg); },
+            "pwd" => { self.say(self.cwd); },
+            "commands" => { self.open_picker("commands"); },
+            "themes" => { self.open_picker("themes"); },
+            "grep" => { self.open_picker("grep"); },
+            "help" | "h" => { self.help(arg); },
+            "messages" | "mes" => {
+                var lines: string[] = std::copy(self.cfg.errors);
+
+                if (lines.len == 0) { lines.push("no messages"); }
+                self.panel = lines;
+                self.panel_title = "messages";
+            },
+            "addins" => {
+                var lines: string[] = [];
+
+                for (let a: string in &self.cfg.addins) {
+                    var state: string = "on";
+
+                    if (self.cfg.disabled_addin(a)) { state = "off"; }
+                    var cmds: string[] = [];
+
+                    for (let c: &self::&Command in &self.cfg.commands) {
+                        if (str::eq(c.addin, a)) { cmds.push(c.name); }
+                    }
+                    lines.push("\(a) (\(state)): \(str::join(&cmds, " "))");
+                }
+                self.panel = lines;
+                self.panel_title = "add-ins";
+            },
+            "stop" | "kill" => { self.stop_job(); },
+            _ => {
+                if (let c = self.cfg.command(name)) {
+                    self.run_job(c);
+                    return;
+                }
+                self.fail_msg("E492: Not an editor command: \(line)");
+            }
+        }
+    }
+
     fn file_info(mut self: &App) -> void {
         var nm: string = self.b.name;
 
