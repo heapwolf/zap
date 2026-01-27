@@ -129,3 +129,108 @@ fn read(s: &string, mut r: &Reader) -> Sx | SyntaxError {
     }
     return Sx { kind: SxKind::Sym, text: word, line: line };
 }
+
+impl Sx {
+    /// is it the symbol name?
+    export fn is(self: &Sx, name: string) -> bool {
+        return self.kind == SxKind::Sym && str::eq(self.text, name);
+    }
+
+    /// the list's head symbol ("": not a list starting with one)
+    export fn head(self: &Sx) -> string {
+        if (self.kind != SxKind::List || self.items.len == 0) {
+            return "";
+        }
+        if (self.items[0].kind != SxKind::Sym) {
+            return "";
+        }
+        return self.items[0].text;
+    }
+
+    /// a list's value after keyword key (`:fg "#fff"`), or none
+    export fn opt(self: &Sx, key: string) -> string? {
+        let n: i64 = self.items.len;
+
+        for (let i: i64 in 0..(n - 1)) {
+            let k: &self::&Sx = &self.items[i];
+
+            if (k.is(key)) {
+                return self.items[i + 1].text;
+            }
+        }
+        return none;
+    }
+
+    /// as source text: strings quoted, symbols and numbers as written, lists
+    /// rebuilt
+    export fn show(self: &Sx) -> string {
+        match (self.kind) {
+            SxKind::Str => { return "\"\(self.text)\""; },
+            SxKind::List => {
+                var parts: string[] = [];
+
+                for (let x: &self::&Sx in &self.items) { parts.push(x.show()); }
+                return "(\(str::join(&parts, " ")))";
+            },
+            _ => { return self.text; }
+        }
+        return self.text;
+    }
+}
+
+#test fn parses_forms() -> i32 {
+    let src: string = "; settings\n(set number true)\n(theme \"pa\\\"per\")\n(map normal \"<C-s>\" -12 (a b))";
+
+    match (parse(src)) {
+        forms => {
+            if (forms.len != 3) {
+                return 1;
+            }
+            let f0: &forms::&Sx = &forms[0];
+            let f2: &forms::&Sx = &forms[2];
+
+            if (!str::eq(f0.head(), "set") || f0.line != 2) {
+                return 2;
+            }
+            if (!str::eq(forms[1].items[1].text, "pa\"per")) {
+                return 3;
+            }
+            if (f2.items[3].n != -12 || f2.items[3].kind != SxKind::Num) {
+                return 4;
+            }
+            if (!str::eq(f2.show(), "(map normal \"<C-s>\" -12 (a b))")) {
+                return 5;
+            }
+        },
+        e: SyntaxError => { return 9; }
+    }
+    match (parse("(a (b)")) {
+        forms => { return 6; },
+        e: SyntaxError => {
+            if (e.line != 1) {
+                return 7;
+            }
+        }
+    }
+    return 0;
+}
+
+#test fn reads_keywords() -> i32 {
+    match (parse("(normal :fg \"#ff0000\" :bold true)")) {
+        forms => {
+            let f: &forms::&Sx = &forms[0];
+
+            if (!str::eq(f.opt(":fg") ?? "", "#ff0000")) {
+                return 1;
+            }
+            if (!str::eq(f.opt(":bold") ?? "", "true")) {
+                return 2;
+            }
+            if (f.opt(":bg") != none) {
+                return 3;
+            }
+        },
+        e: SyntaxError => { return 9; }
+    }
+    return 0;
+}
