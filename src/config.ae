@@ -1,0 +1,122 @@
+//! zap's configuration, in s-expressions. Read in order: the built-in
+//! defaults (`DEFAULTS`; `:defaults` shows them), then the nearest `init.zap`
+//! in the start directory or above, if trusted (`:trust`), else
+//! `~/.config/zap/init.zap` (`$XDG_CONFIG_HOME/zap/init.zap`). Each form is a
+//! declaration:
+//!
+//! | form                                            | what it does                                         |
+//! | ----------------------------------------------- | ---------------------------------------------------- |
+//! | `(set name value)`                              | an option (`:set` lists them)                        |
+//! | `(theme "name" [:inherit "t"] (face :fg ..)..)` | a theme; `(set theme "name")` picks it               |
+//! | `(map mode "keys" "command")`                   | an ex command on keys (normal, insert, visual, tree) |
+//! | `(command "name" :run ("prog" "arg" ..) ..)`    | an ex command that runs a program (below)            |
+//! | `(on "save" "*.ae" "command")`                  | runs a command on an event (save, open)              |
+//! | `(filetype "name" :ext (".x") :syntax "s" ..)`  | a file type: its syntax, comment, tabstop, icon      |
+//! | `(special "README.md" ..)`                      | names the tree shows in the special face             |
+//! | `(addin "name" forms..)`                        | forms that belong together; `(disable "name")`       |
+//! | `(load "file.zap")`                             | reads another file (path relative to this one)       |
+//!
+//! `:run` words may use `%` (the file), `%:h` (its directory), `%:r` (the
+//! file without extension), `%:t` (its name), `<cword>` (the word under the
+//! cursor) and `<cwd>`. Options: `:save true` (write the buffer first),
+//! `:errors true` (output `file:line:col: message` lines become diagnostics:
+//! `:cnext`, the gutter), `:reload true` (reread the file after, for
+//! formatters), `:show` (`"panel"`, default: last lines under the status
+//! line; `"buffer"`: all output in a buffer; `"jump"`: go to the first
+//! `file:line:col` printed; `"quiet"`: errors only), `:doc "..."`. Commands
+//! run in the background; editing goes on.
+
+import str from "std/string";
+import tui from "std/tui";
+import fs from "std/fs";
+import path from "std/path";
+import { Sx, SxKind, SyntaxError, parse } from "sexp.ae";
+import { Theme, theme } from "themes/theme.ae";
+import base from "themes/base.ae";
+import builtin from "themes/builtin.ae";
+import process from "std/process";
+import state from "state.ae";
+import syntax from "syntax.ae";
+
+/// keys that run an ex command in a mode
+export struct Keymap {
+    export mode: string;
+    export keys: string[];
+    export cmd: string;
+    export addin: string;
+}
+
+/// an ex command that runs a program
+export struct Command {
+    export name: string;
+    export run: string[] = [];
+    export save: bool = false;
+    export errors: bool = false;
+    export reload: bool = false;
+    export show: string;
+    export doc: string = "";
+    export addin: string = "";
+}
+
+/// a command run on an event for files matching pattern
+export struct Hook {
+    export event: string;
+    export pattern: string;
+    export command: string;
+    export addin: string;
+}
+
+/// a file type: name endings (or whole names), syntax, comment leader,
+/// tabstop (0: the option's), icon
+export struct FileType {
+    export name: string;
+    export exts: string[] = [];
+    export names: string[] = [];
+    export syntax: string = "";
+    export comment: string = "";
+    export tabstop: i64 = 0;
+    export icon: string = "";
+    export addin: string = "";
+}
+
+/// the whole configuration
+export struct Config {
+    export number: bool = true;
+    export tabstop: i64 = 4;
+    export expandtab: bool = true;
+    export tree: bool = true;
+    export tree_width: i64 = 28;
+    export tree_hidden: bool = true;
+    export icons: bool = true;
+    export tildes: bool = true;         // ~ on rows past the buffer's end
+    export gitsigns: bool = true;       // gutter git signs: lines added, changed, removed
+    export keyaccel: bool = true;       // held h l Left Right speed up (to 3x)
+    export scrolloff: i64 = 3;
+    export scrollaccel: i64 = 6;        // a fast wheel scrolls up to this many times as far (1:
+                                        //   never)
+    export theme: string = "paper";
+    export leader: string = "<Space>";
+    export ignorecase: bool = true;
+    export smartcase: bool = true;
+    export regex: bool = false;
+    export cmdheight: i64 = 0;
+    export resident: i64 = 64;
+    export autoindent: bool = true;
+    export clipboard: bool = true;      // yanks also go to the terminal clipboard (OSC 52)
+    export undofile: bool = true;       // keep undo history for each written file
+    export autocomplete: bool = true;   // word menu while typing (insert mode)
+    export sheets: bool = true;         // open CSV and TSV files as spreadsheets
+    export mermaid: bool = true;        // clicking a Markdown mermaid block draws it
+    export themes: Theme[] = [];
+    export maps: Keymap[] = [];
+    export commands: Command[] = [];
+    export hooks: Hook[] = [];
+    export filetypes: FileType[] = [];
+    export special: string[] = [];
+    export addins: string[] = [];
+    export disabled: string[] = [];
+    export errors: string[] = [];
+    export files: string[] = [];         // files read, in order
+    export local: string = "";           // local init.zap read instead of the user's ("": none)
+    export untrusted: string = "";       // local init.zap skipped as untrusted (:trust)
+}
