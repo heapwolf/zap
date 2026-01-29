@@ -120,3 +120,19 @@ export struct Config {
     export local: string = "";           // local init.zap read instead of the user's ("": none)
     export untrusted: string = "";       // local init.zap skipped as untrusted (:trust)
 }
+
+/// option names, as `:set` and `(set ...)` use them
+export let OPTIONS: string[] = [
+    "number", "tabstop", "expandtab", "tree", "tree-width", "tree-hidden", "icons", "scrolloff",
+    "theme", "leader", "ignorecase", "smartcase", "regex", "cmdheight", "resident", "autoindent",
+    "clipboard", "undofile", "autocomplete", "sheets", "mermaid", "scrollaccel", "tildes",
+    "keyaccel", "gitsigns"
+];
+
+impl Config {
+    /// sets option name to value (text: "true", "4", "paper") -> the error
+    /// ("": none)
+    export fn set(mut self: &Config, name: string, value: string) -> string {
+        let on: bool = str::eq(value, "true") || str::eq(value, "on") || str::eq(value, "yes");
+        let off: bool = str::eq(value, "false") || str::eq(value, "off") || str::eq(value, "no");
+        var n: i64 = -1;
