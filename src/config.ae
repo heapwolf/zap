@@ -136,3 +136,166 @@ impl Config {
         let on: bool = str::eq(value, "true") || str::eq(value, "on") || str::eq(value, "yes");
         let off: bool = str::eq(value, "false") || str::eq(value, "off") || str::eq(value, "no");
         var n: i64 = -1;
+
+        match (str::parse_int(value)) {
+            v => { n = v; },
+            e: str::BadInt => {}
+        }
+        match (name) {
+            "number" | "nu" => {
+                if (on || off) {
+                    self.number = on;
+                    return "";
+                }
+            },
+            "expandtab" | "et" => {
+                if (on || off) {
+                    self.expandtab = on;
+                    return "";
+                }
+            },
+            "tree" => {
+                if (on || off) {
+                    self.tree = on;
+                    return "";
+                }
+            },
+            "tree-hidden" => {
+                if (on || off) {
+                    self.tree_hidden = on;
+                    return "";
+                }
+            },
+            "icons" => {
+                if (on || off) {
+                    self.icons = on;
+                    return "";
+                }
+            },
+            "tildes" => {
+                if (on || off) {
+                    self.tildes = on;
+                    return "";
+                }
+            },
+            "keyaccel" => {
+                if (on || off) {
+                    self.keyaccel = on;
+                    return "";
+                }
+            },
+            "gitsigns" => {
+                if (on || off) {
+                    self.gitsigns = on;
+                    return "";
+                }
+            },
+            "ignorecase" | "ic" => {
+                if (on || off) {
+                    self.ignorecase = on;
+                    return "";
+                }
+            },
+            "smartcase" | "scs" => {
+                if (on || off) {
+                    self.smartcase = on;
+                    return "";
+                }
+            },
+            "regex" => {
+                if (on || off) {
+                    self.regex = on;
+                    return "";
+                }
+            },
+            "autoindent" | "ai" => {
+                if (on || off) {
+                    self.autoindent = on;
+                    return "";
+                }
+            },
+            "clipboard" => {
+                if (on || off) {
+                    self.clipboard = on;
+                    return "";
+                }
+            },
+            "undofile" | "udf" => {
+                if (on || off) {
+                    self.undofile = on;
+                    return "";
+                }
+            },
+            "autocomplete" | "ac" => {
+                if (on || off) {
+                    self.autocomplete = on;
+                    return "";
+                }
+            },
+            "sheets" => {
+                if (on || off) {
+                    self.sheets = on;
+                    return "";
+                }
+            },
+            "mermaid" => {
+                if (on || off) {
+                    self.mermaid = on;
+                    return "";
+                }
+            },
+            "tabstop" | "ts" => {
+                if (n >= 1 && n <= 16) {
+                    self.tabstop = n;
+                    return "";
+                }
+            },
+            "tree-width" => {
+                if (n >= 4) {
+                    self.tree_width = n;
+                    return "";
+                }
+            },
+            "scrolloff" | "so" => {
+                if (n >= 0) {
+                    self.scrolloff = n;
+                    return "";
+                }
+            },
+            "scrollaccel" => {
+                if (n >= 1 && n <= 50) {
+                    self.scrollaccel = n;
+                    return "";
+                }
+            },
+            "cmdheight" | "ch" => {
+                if (n == 0 || n == 1) {
+                    self.cmdheight = n;
+                    return "";
+                }
+            },
+            "resident" => {
+                if (n >= 2) {
+                    self.resident = n;
+                    return "";
+                }
+            },
+            "theme" => {
+                for (let t: &self::&Theme in &self.themes) {
+                    if (str::eq(t.name, value)) {
+                        self.theme = value;
+                        return "";
+                    }
+                }
+                return "no theme \(value)";
+            },
+            "leader" => {
+                if (parse_keys(value, "").len == 1) {
+                    self.leader = parse_keys(value, "")[0];
+                    return "";
+                }
+            },
+            _ => { return "no option \(name)"; }
+        }
+        return "\(name) cannot be \(value)";
+    }
