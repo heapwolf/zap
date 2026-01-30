@@ -299,3 +299,68 @@ impl Config {
         }
         return "\(name) cannot be \(value)";
     }
+
+    /// option name's value, as text
+    export fn get(self: &Config, name: string) -> string {
+        match (name) {
+            "number" | "nu" => { return "\(self.number)"; },
+            "expandtab" | "et" => { return "\(self.expandtab)"; },
+            "tree" => { return "\(self.tree)"; },
+            "tree-hidden" => { return "\(self.tree_hidden)"; },
+            "icons" => { return "\(self.icons)"; },
+            "tildes" => { return "\(self.tildes)"; },
+            "keyaccel" => { return "\(self.keyaccel)"; },
+            "gitsigns" => { return "\(self.gitsigns)"; },
+            "ignorecase" | "ic" => { return "\(self.ignorecase)"; },
+            "smartcase" | "scs" => { return "\(self.smartcase)"; },
+            "regex" => { return "\(self.regex)"; },
+            "autoindent" | "ai" => { return "\(self.autoindent)"; },
+            "clipboard" => { return "\(self.clipboard)"; },
+            "undofile" | "udf" => { return "\(self.undofile)"; },
+            "autocomplete" | "ac" => { return "\(self.autocomplete)"; },
+            "sheets" => { return "\(self.sheets)"; },
+            "mermaid" => { return "\(self.mermaid)"; },
+            "tabstop" | "ts" => { return "\(self.tabstop)"; },
+            "tree-width" => { return "\(self.tree_width)"; },
+            "scrolloff" | "so" => { return "\(self.scrolloff)"; },
+            "scrollaccel" => { return "\(self.scrollaccel)"; },
+            "cmdheight" | "ch" => { return "\(self.cmdheight)"; },
+            "resident" => { return "\(self.resident)"; },
+            "theme" => { return self.theme; },
+            "leader" => { return self.leader; },
+            _ => { return ""; }
+        }
+        return "";
+    }
+
+    /// is add-in name disabled?
+    export fn disabled_addin(self: &Config, name: string) -> bool {
+        if (name.len == 0) {
+            return false;
+        }
+
+        for (let d: string in &self.disabled) {
+            if (str::eq(d, name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// reads the built-in themes other than paper and ink (after the defaults)
+    export fn read_builtin_themes(mut self: &Config) -> void {
+        for (let k: i64 in 0..builtin::TEXTS.len) {
+            self.read(builtin::TEXTS[k], builtin::ORIGINS[k]);
+        }
+    }
+
+    /// reads text's forms (from file origin), in order
+    export fn read(mut self: &Config, text: string, origin: string) -> void {
+        self.files.push(origin);
+        match (parse(text)) {
+            forms => {
+                for (let f: &forms::&Sx in &forms) { self.form(f, origin, ""); }
+            },
+            e: SyntaxError => { self.errors.push("\(origin):\(e.line): \(e.message)"); }
+        }
+    }
