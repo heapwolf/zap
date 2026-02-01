@@ -364,3 +364,79 @@ impl Config {
             e: SyntaxError => { self.errors.push("\(origin):\(e.line): \(e.message)"); }
         }
     }
+
+    // reads one form (in add-in addin, if any)
+    fn form(mut self: &Config, f: &Sx, origin: string, addin: string) -> void {
+        let head: string = f.head();
+        let n: i64 = f.items.len;
+        let at: string = "\(origin):\(f.line)";
+
+        match (head) {
+            "set" => {
+                if (n != 3) {
+                    self.errors.push("\(at): (set name value)");
+                    return;
+                }
+                let why: string = self.set(f.items[1].text, f.items[2].text);
+
+                if (why.len > 0) { self.errors.push("\(at): \(why)"); }
+            },
+            "theme" => {
+                if (n < 2 || f.items[1].kind != SxKind::Str) {
+                    self.errors.push("\(at): (theme \"name\" faces...)");
+                    return;
+                }
+                var errs: string[] = [];
+
+                self.themes.push(theme(f, mut &errs));
+
+                for (let e: string in &errs) { self.errors.push("\(origin): \(e)"); }
+            },
+            "map" => {
+                if (n != 4) {
+                    self.errors.push("\(at): (map mode \"keys\" \"command\")");
+                    return;
+                }
+                let mode: string = f.items[1].text;
+
+                if (!str::eq(mode, "normal") && !str::eq(mode, "insert") &&
+                    !str::eq(mode, "visual") &&
+                    !str::eq(mode, "tree")) {
+                    self.errors.push("\(at): no mode \(mode) (normal, insert, visual, tree)");
+                    return;
+                }
+                self.maps.push(Keymap {
+                    mode: mode, keys: parse_keys(f.items[2].text, self.leader),
+                    cmd: f.items[3].text, addin: addin
+                });
+            },
+            "command" => {
+                if (n < 2) {
+                    self.errors.push("\(at): (command \"name\" :run (...))");
+                    return;
+                }
+                var c: Command = Command {
+                    name: f.items[1].text, show: f.opt(":show") ?? "panel",
+                    doc: f.opt(":doc") ?? "",
+                    addin: addin
+                };
+
+                c.save = str::eq(f.opt(":save") ?? "", "true");
+                c.errors = str::eq(f.opt(":errors") ?? "", "true");
+                c.reload = str::eq(f.opt(":reload") ?? "", "true");
+
+                for (let i: i64 in 1..(n - 1)) {
+                    let k: &f::&Sx = &f.items[i];
+
+                    if (k.is(":run")) {
+                        let v: &f::&Sx = &f.items[i + 1];
+
+                        for (let w: &v::&Sx in &v.items) { c.run.push(w.text); }
+                    }
+                }
+                if (c.run.len == 0) {
+                    self.errors.push("\(at): command \(c.name) has no :run (\"program\" args...)");
+                    return;
+                }
+                // a redeclared command replaces the old one
+                var kept: Command[] = [];
