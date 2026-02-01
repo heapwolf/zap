@@ -440,3 +440,106 @@ impl Config {
                 }
                 // a redeclared command replaces the old one
                 var kept: Command[] = [];
+
+                for (let o: &self::&Command in &self.commands) {
+                    if (!str::eq(o.name, c.name)) { kept.push(std::copy(*o)); }
+                }
+                kept.push(c);
+                self.commands = kept;
+            },
+            "on" => {
+                if (n != 4) {
+                    self.errors.push("\(at): (on \"event\" \"pattern\" \"command\")");
+                    return;
+                }
+                self.hooks.push(Hook {
+                    event: f.items[1].text, pattern: f.items[2].text, command: f.items[3].text,
+                    addin: addin
+                });
+            },
+            "filetype" => {
+                if (n < 2) {
+                    self.errors.push("\(at): (filetype \"name\" :ext (...) ...)");
+                    return;
+                }
+                var t: FileType = FileType {
+                    name: f.items[1].text, syntax: f.opt(":syntax") ?? f.items[1].text,
+                    comment: f.opt(":comment") ?? "", icon: f.opt(":icon") ?? "", addin: addin
+                };
+
+                match (str::parse_int(f.opt(":tabstop") ?? "0")) {
+                    v => { t.tabstop = v; },
+                    e: str::BadInt => {}
+                }
+                // unknown syntax: report it, treat the files as plain text
+                if (!syntax::valid(t.syntax)) {
+                    self.errors.push(
+                        "\(at): (filetype \"\(t.name)\"): unknown syntax \"\(t.syntax)\" (known: \(syntax::lang_names()), csv, tsv, or \"\" for plain text)"
+                    );
+                    t.syntax = "";
+                }
+
+                for (let i: i64 in 1..(n - 1)) {
+                    let k: &f::&Sx = &f.items[i];
+                    let v: &f::&Sx = &f.items[i + 1];
+
+                    if (k.is(":ext") || k.is(":names")) {
+                        var words: string[] = [];
+
+                        if (v.kind == SxKind::List) {
+                            for (let w: &v::&Sx in &v.items) { words.push(w.text); }
+                        } else {
+                            words.push(v.text);
+                        }
+                        if (k.is(":ext")) { t.exts = words; } else { t.names = words; }
+                    }
+                }
+                self.filetypes.push(t);
+            },
+            "special" => {
+                for (let i: i64 in 1..n) { self.special.push(f.items[i].text); }
+            },
+            "addin" => {
+                if (n < 2) {
+                    self.errors.push("\(at): (addin \"name\" forms...)");
+                    return;
+                }
+                let name: string = f.items[1].text;
+
+                self.addins.push(name);
+
+                for (let i: i64 in 2..n) {
+                    let g: &f::&Sx = &f.items[i];
+
+                    self.form(g, origin, name);
+                }
+            },
+            "disable" => {
+                for (let i: i64 in 1..n) { self.disabled.push(f.items[i].text); }
+            },
+            "load" => {
+                if (n != 2) {
+                    self.errors.push("\(at): (load \"file.zap\")");
+                    return;
+                }
+                var p: string = f.items[1].text;
+
+                if (str::starts_with(p, "~/")) {
+                    p = "\(process::env("HOME"))/\(str::substr(p, 2, p.len - 2))";
+                }
+                if (!path::is_absolute(p)) { p = path::join(path::dir(origin), p); }
+                if (self.files.len > 32) {
+                    self.errors.push("\(at): too many loads (a loop?)");
+                    return;
+                }
+                match (fs::read_text(p)) {
+                    t => { self.read(t, p); },
+                    e: fs::NotFound => { self.errors.push("\(at): no file \(p)"); },
+                    e2: fs::PermissionDenied => { self.errors.push("\(at): cannot read \(p)"); },
+                    e3: fs::IsADirectory => { self.errors.push("\(at): \(p) is a directory"); },
+                    e4: fs::IoError => { self.errors.push("\(at): cannot read \(p)"); }
+                }
+            },
+            _ => { self.errors.push("\(at): unknown form \(f.show())"); }
+        }
+    }
