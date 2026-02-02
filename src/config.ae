@@ -543,3 +543,113 @@ impl Config {
             _ => { self.errors.push("\(at): unknown form \(f.show())"); }
         }
     }
+
+    /// the command called name (none if missing or its add-in is off)
+    export fn command(self: &Config, name: string) -> Command? {
+        for (let c: &self::&Command in &self.commands) {
+            if (str::eq(c.name, name) && !self.disabled_addin(c.addin)) {
+                return std::copy(*c);
+            }
+        }
+        return none;
+    }
+
+    /// file p's type ("text" if none matches)
+    export fn filetype(self: &Config, p: string) -> FileType {
+        let base: string = path::base(p);
+        var k: i64 = self.filetypes.len - 1;
+
+        while (k >= 0) {
+            let t: &self::&FileType = &self.filetypes[k];
+
+            k -= 1;
+            if (self.disabled_addin(t.addin)) { continue; }
+
+            for (let nm: string in &t.names) {
+                if (str::eq(nm, base)) {
+                    return std::copy(*t);
+                }
+            }
+
+            for (let e: string in &t.exts) {
+                if (str::ends_with(base, e)) {
+                    return std::copy(*t);
+                }
+            }
+        }
+        return FileType { name: "text", syntax: "" };
+    }
+}
+
+/// the user's config file path
+export fn config_path() -> string {
+    var base: string = process::env("XDG_CONFIG_HOME");
+
+    if (base.len == 0) { base = "\(process::env("HOME"))/.config"; }
+    return "\(base)/zap/init.zap";
+}
+
+/// the nearest init.zap in dir or above ("": none, or it is the user's own)
+export fn local_path(dir: string) -> string {
+    var d: string = path::clean(dir);
+    let own: string = path::clean(config_path());
+    var steps: i64 = 0;
+
+    while (steps < 64) {
+        let p: string = path::join(d, "init.zap");
+
+        if (!str::eq(p, own)) {
+            match (fs::info(p)) {
+                i => {
+                    if (i.kind == fs::Kind::File) {
+                        return p;
+                    }
+                },
+                e: fs::NotFound => {}, e2: fs::PermissionDenied => {}, e3: fs::IoError => {}
+            }
+        }
+        let up: string = path::dir(d);
+
+        if (str::eq(up, d)) { break; }
+        d = up;
+        steps += 1;
+    }
+    return "";
+}
+
+// the trusted local files list: "hash path" lines
+fn trust_path() -> string {
+    return state::dir("trust");
+}
+
+/// is file p, with its current text, trusted in list (by :trust, for this
+/// exact text)?
+export fn trusted(list: string, p: string, text: string) -> bool {
+    let want: string = "\(std::hash(text)) \(p)";
+
+    for (let l: string in str::lines(fs::read_file(list) ?? "")) {
+        if (str::eq(l, want)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// trusts file p's current text in the user's trust list (replacing any
+/// older entry) -> ok?
+export fn trust(p: string) -> bool { return trust_in(trust_path(), p); }
+
+fn trust_in(list: string, p: string) -> bool {
+    let text: string = fs::read_file(p) ?? "";
+    var out: str::Builder;
+
+    for (let l: string in str::lines(fs::read_file(list) ?? "")) {
+        if (l.len > 0 && !str::ends_with(l, " \(p)")) {
+            out.add(l);
+            out.add_byte(10);
+        }
+    }
+    out.add("\(std::hash(text)) \(p)\n");
+    state::ensure_dir(path::dir(list));
+    return fs::write_file(list, out.to_string());
+}
