@@ -653,3 +653,139 @@ fn trust_in(list: string, p: string) -> bool {
     state::ensure_dir(path::dir(list));
     return fs::write_file(list, out.to_string());
 }
+
+/// the defaults, then dir's config: the nearest init.zap in or above it, if
+/// trusted (it replaces the user's; `(load "~/.config/zap/init.zap")` in it
+/// reads that too), else the user's file, if any. A local file runs programs
+/// (its hooks), so it is read only after `:trust` trusts its text (like
+/// nvim's exrc).
+export fn load(dir: string) -> Config { return load_with(dir, trust_path()); }
+
+fn load_with(dir: string, list: string) -> Config {
+    var c: Config = Config {};
+
+    c.read(DEFAULTS, "<defaults>");
+    c.read_builtin_themes();
+    let local: string = local_path(dir);
+
+    if (local.len > 0) {
+        match (fs::read_text(local)) {
+            t => {
+                if (trusted(list, local, t)) {
+                    c.local = local;
+                    c.read(t, local);
+                    return c;
+                }
+                c.untrusted = local;
+            },
+            e: fs::NotFound => {},
+            e2: fs::PermissionDenied => { c.errors.push("cannot read \(local)"); },
+            e3: fs::IsADirectory => {},
+            e4: fs::IoError => { c.errors.push("cannot read \(local)"); }
+        }
+    }
+    let p: string = config_path();
+
+    match (fs::read_text(p)) {
+        t => { c.read(t, p); },
+        e: fs::NotFound => {},
+        e2: fs::PermissionDenied => { c.errors.push("cannot read \(p)"); },
+        e3: fs::IsADirectory => { c.errors.push("\(p) is a directory"); },
+        e4: fs::IoError => { c.errors.push("cannot read \(p)"); }
+    }
+    return c;
+}
+
+// ---- keys ------------------------------------------------------------------------
+
+// the canonical < > name of a key with several spellings
+fn key_base(name: string) -> string {
+    let low: string = str::to_lower(name);
+
+    match (low) {
+        "cr" | "enter" | "return" => { return "CR"; },
+        "esc" | "escape" => { return "Esc"; },
+        "space" => { return "Space"; },
+        "tab" => { return "Tab"; },
+        "bs" | "backspace" => { return "BS"; },
+        "del" | "delete" => { return "Del"; },
+        "up" => { return "Up"; },
+        "down" => { return "Down"; },
+        "left" => { return "Left"; },
+        "right" => { return "Right"; },
+        "home" => { return "Home"; },
+        "end" => { return "End"; },
+        "pageup" => { return "PageUp"; },
+        "pagedown" => { return "PageDown"; },
+        "insert" => { return "Insert"; },
+        "lt" => { return "lt"; },
+        _ => {}
+    }
+    if (low.len >= 2 && low[0] == 'f' && str::is_ascii_digit(low[1])) {
+        return "F\(str::substr(low, 1, low.len - 1))";
+    }
+    return name;
+}
+
+/// spec's keys as tokens: "<C-s>" "<Space>e" "gg" "<leader>f"
+/// (leader: what <leader> is) -> ["<C-s>"], ["<Space>", "e"], ["g", "g"]
+export fn parse_keys(spec: string, leader: string) -> string[] {
+    var out: string[] = [];
+    let n: i64 = spec.len;
+    var i: i64 = 0;
+
+    while (i < n) {
+        if (spec[i] == '<') {
+            let close: i64 = str::find_from(spec, ">", i + 1) ?? -1;
+
+            if (close > i + 1) {
+                let inner: string = str::substr(spec, i + 1, close - i - 1);
+
+                if (str::eq_fold(inner, "leader")) {
+                    if (leader.len > 0) { out.push(leader); }
+                    i = close + 1;
+                    continue;
+                }
+                let parts: string[] = str::split(inner, "-");
+                var mods: string = "";
+                var ok: bool = true;
+                let np: i64 = parts.len;
+
+                for (let k: i64 in 0..(np - 1)) {
+                    let m: string = str::to_lower(parts[k]);
+
+                    if (str::eq(m, "c")) { mods = "\(mods)C-"; }
+                    else if (str::eq(m, "m") || str::eq(m, "a")) { mods = "\(mods)M-"; }
+                    else if (str::eq(m, "s")) { mods = "\(mods)S-"; }
+                    else { ok = false; }
+                }
+                var base: string = parts[np - 1];
+
+                if (base.len == 0 && np >= 2) { base = "-"; }   // <C-->
+                if (ok && base.len > 0) {
+                    base = key_base(base);
+                    if (str::char_count(base) == 1 && str::contains(mods, "C-")) {
+                        base = str::to_lower(base);
+                    }
+                    if (mods.len == 0 && str::eq(base, "lt")) {
+                        out.push("<lt>");
+                    } else if (mods.len == 0 && str::char_count(base) == 1) {
+                        out.push(base);
+                    } else {
+                        out.push("<\(mods)\(base)>");
+                    }
+                    i = close + 1;
+                    continue;
+                }
+            }
+        }
+        let w: i64 = str::char_width(spec, i);
+        var c: string = str::substr(spec, i, w);
+
+        if (str::eq(c, "<")) { c = "<lt>"; }
+        if (str::eq(c, " ")) { c = "<Space>"; }
+        out.push(c);
+        i += w;
+    }
+    return out;
+}
