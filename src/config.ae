@@ -789,3 +789,67 @@ export fn parse_keys(spec: string, leader: string) -> string[] {
     }
     return out;
 }
+
+#test fn local_config_once_trusted() -> i32 {
+    let tmp: string = fs::temp_dir();
+    let base: string = "\(tmp)/zap-local-config";
+
+    state::ensure_dir("\(base)/proj/sub");
+    let list: string = "\(base)/trust";
+
+    fs::write_file(list, "");
+    fs::write_file("\(base)/proj/init.zap", "(set tabstop 7)");
+    // found from a subdirectory, but not read until trusted
+    if (!str::eq(local_path("\(base)/proj/sub"), "\(base)/proj/init.zap")) {
+        return 1;
+    }
+    let before: Config = load_with("\(base)/proj/sub", list);
+
+    if (before.tabstop == 7 || !str::eq(before.untrusted, "\(base)/proj/init.zap")) {
+        return 2;
+    }
+    if (!trust_in(list, "\(base)/proj/init.zap")) {
+        return 3;
+    }
+    let after: Config = load_with("\(base)/proj/sub", list);
+
+    if (after.tabstop != 7 || after.untrusted.len > 0 || after.local.len == 0) {
+        return 4;
+    }
+    // changed since trusted: not read until trusted again
+    fs::write_file("\(base)/proj/init.zap", "(set tabstop 9)");
+    let changed: Config = load_with("\(base)/proj", list);
+
+    if (changed.tabstop == 9 || changed.untrusted.len == 0) {
+        return 5;
+    }
+    return 0;
+}
+
+#test fn unknown_syntax_is_an_error() -> i32 {
+    var c: Config = Config {};
+
+    c.read(DEFAULTS, "<defaults>");
+    if (c.errors.len != 0) {                        // (csv, tsv and "" are fine)
+        return 1;
+    }
+    c.read(
+        "(filetype \"typo\" :ext (\".zz\") :syntax \"rust\")\n(filetype \"ok\" :ext (\".ok\") :syntax \"json\")",
+        "init.zap"
+    );
+    if (c.errors.len != 1) {
+        return 2;
+    }
+    if (!str::contains(c.errors[0], "unknown syntax \"rust\"") ||
+        !str::contains(c.errors[0], "json")) {
+        return 3;
+    }
+    // its files are plain text; the other form is still read
+    if (c.filetype("/a/q.zz").syntax.len != 0 || !str::eq(c.filetype("/a/q.zz").name, "typo")) {
+        return 4;
+    }
+    if (!str::eq(c.filetype("/a/x.ok").syntax, "json")) {
+        return 5;
+    }
+    return 0;
+}
