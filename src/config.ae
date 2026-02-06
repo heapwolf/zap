@@ -790,6 +790,123 @@ export fn parse_keys(spec: string, leader: string) -> string[] {
     return out;
 }
 
+/// key k as a parse_keys token: "a", "<C-s>", "<CR>",
+/// "<S-Tab>", "<M-x>", "<Space>"
+export fn token(k: &tui::Key) -> string {
+    if (let c = k.typed()) {
+        if (c == ' ') {
+            return "<Space>";
+        }
+        if (c == '<') {
+            return "<lt>";
+        }
+        return str::from_char(c);
+    }
+    var name: string = k.name();
+    var mods: string = "";
+
+    while (true) {
+        if (str::starts_with(name, "Ctrl+") && name.len > 5) {
+            mods = "\(mods)C-";
+            name = str::substr(name, 5, name.len - 5);
+        } else if (str::starts_with(name, "Alt+") && name.len > 4) {
+            mods = "\(mods)M-";
+            name = str::substr(name, 4, name.len - 4);
+        } else if (str::starts_with(name, "Shift+") && name.len > 6) {
+            mods = "\(mods)S-";
+            name = str::substr(name, 6, name.len - 6);
+        } else {
+            break;
+        }
+    }
+    var base: string = key_base(name);
+
+    if (str::eq(base, "BackTab")) {
+        base = "Tab";
+        if (!str::contains(mods, "S-")) { mods = "\(mods)S-"; }
+    }
+    if (str::char_count(base) == 1 && str::contains(mods, "C-")) { base = str::to_lower(base); }
+    if (mods.len == 0 && str::char_count(base) == 1) {
+        return base;
+    }
+    return "<\(mods)\(base)>";
+}
+
+// the built-in config, around its base themes (themes/base.ae)
+let DEFAULTS_TOP: string = """;; zap's built-in configuration. ~/.config/zap/init.zap is read after
+;; this; its forms replace or add to these.
+
+(set number true)
+(set tabstop 4)
+(set tree true)
+(set tree-width 28)
+(set icons true)
+(set tildes true)
+(set keyaccel true)
+(set gitsigns true)
+(set scrolloff 3)
+
+""";
+let DEFAULTS_REST: string = """;; ---- files ----------------------------------------------------------------
+
+(filetype "markdown" :ext (".md" ".markdown") :syntax "markdown" :icon "")
+(filetype "zap" :ext (".zap") :syntax "sexp" :comment ";" :icon "")
+(filetype "sexp" :ext (".sexp" ".sxp") :syntax "sexp" :comment ";" :icon "")
+(filetype "lisp" :ext (".lisp" ".lsp" ".cl" ".asd") :syntax "sexp" :comment ";" :tabstop 2 :icon "")
+(filetype "elisp" :ext (".el") :syntax "sexp" :comment ";" :tabstop 2 :icon "")
+(filetype "scheme" :ext (".scm" ".ss" ".sld" ".rkt") :syntax "sexp" :comment ";" :tabstop 2 :icon "")
+(filetype "clojure" :ext (".clj" ".cljs" ".cljc" ".edn" ".bb") :syntax "sexp" :comment ";" :tabstop 2 :icon "")
+(filetype "fennel" :ext (".fnl") :syntax "sexp" :comment ";" :tabstop 2 :icon "")
+(filetype "shell" :ext (".sh" ".bash" ".zsh") :syntax "shell" :comment "#" :icon "")
+(filetype "c" :ext (".c" ".h") :syntax "c" :comment "//" :icon "")
+(filetype "cpp" :ext (".cpp" ".cc" ".cxx" ".c++" ".hpp" ".hh" ".hxx" ".h++" ".ipp" ".tpp") :syntax "cpp" :comment "//" :icon "")
+(filetype "swift" :ext (".swift") :syntax "swift" :comment "//" :icon "")
+(filetype "javascript" :ext (".js" ".mjs" ".cjs" ".jsx" ".ts" ".tsx") :syntax "js" :comment "//" :icon "")
+(filetype "json" :ext (".json" ".geojson" ".webmanifest" ".har") :syntax "json" :tabstop 2 :icon "")
+(filetype "jsonc" :ext (".jsonc" ".json5") :names ("tsconfig.json" "jsconfig.json" ".eslintrc" ".babelrc" "settings.json" "devcontainer.json") :syntax "json" :comment "//" :tabstop 2 :icon "")
+(filetype "jsonl" :ext (".jsonl" ".ndjson" ".jsonlines") :syntax "json" :icon "")
+(filetype "css" :ext (".css") :syntax "css" :icon "")
+(filetype "html" :ext (".html" ".htm") :syntax "html" :tabstop 2 :icon "")
+(filetype "python" :ext (".py" ".pyi" ".pyw") :syntax "python" :comment "#" :icon "")
+(filetype "mermaid" :ext (".mmd" ".mermaid") :syntax "mermaid" :comment "%%" :icon "")
+(filetype "asm" :ext (".asm" ".nasm" ".inc") :syntax "asm" :comment ";" :icon "")
+(filetype "gas" :ext (".s") :syntax "asm" :comment "#" :icon "")
+(filetype "gas-cpp" :ext (".S") :syntax "asm" :comment "//" :icon "")
+(filetype "csv" :ext (".csv") :syntax "csv" :icon "")
+(filetype "tsv" :ext (".tsv" ".tab") :syntax "tsv" :icon "")
+(filetype "text" :ext (".txt") :syntax "" :icon "")
+(special "README.md" "readme.md" "README" "Makefile" "index.json" "LICENSE")
+
+;; ---- keys -----------------------------------------------------------------
+
+(map normal "<C-t>" "tree")
+(map tree "<C-t>" "tree")
+(map normal "<leader>e" "tree focus")
+(map normal "<C-k>" "palette")
+(map tree "<C-k>" "palette")
+(map insert "<C-k>" "palette")
+(map visual "<C-k>" "palette")
+;; (alternative for terminals and tmux setups that take Ctrl-K)
+(map normal "<leader>p" "palette")
+(map tree "<leader>p" "palette")
+(map visual "<leader>p" "palette")
+(map normal "<Tab>" "focus next")
+(map normal "<S-Tab>" "focus prev")
+(map tree "<Tab>" "focus next")
+(map tree "<S-Tab>" "focus prev")
+(map normal "<C-n>" "bnext")
+(map normal "<C-p>" "bprevious")
+(map normal "<leader>f" "palette files")
+(map normal "<leader>/" "palette grep")
+(map normal "<leader>s" "palette symbols")
+(map normal "<leader>b" "palette buffers")
+(map normal "<leader>n" "set number!")
+(map normal "<leader>m" "mermaid")
+(map normal "<C-s>" "w")
+(map insert "<C-s>" "w")
+(map normal "]d" "cnext")
+(map normal "[d" "cprev")
+
 #test fn local_config_once_trusted() -> i32 {
     let tmp: string = fs::temp_dir();
     let base: string = "\(tmp)/zap-local-config";
