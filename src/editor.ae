@@ -3158,6 +3158,118 @@ impl App {
         }
     }
 
+    fn theme_names(self: &App) -> string[] {
+        var names: string[] = [];
+
+        for (let t: &self::&Theme in &self.cfg.themes) { names.push(t.name); }
+        return names;
+    }
+
+    // moves the cursor to line y's first non-blank
+    fn go_first(mut self: &App, y: i64) -> void {
+        var yy: i64 = y;
+        let last: i64 = self.b.text.count - 1;
+
+        if (yy > last) { yy = last; }
+        if (yy < 0) { yy = 0; }
+        let l: string = self.b.text.get(yy);
+
+        self.go(yy, first_non_blank(&l), true);
+    }
+
+    /// writes the current buffer (to p, if given) -> did it work?
+    export fn write(mut self: &App, p0: string, force: bool) -> bool {
+        var p: string = p0;
+
+        if (p.len > 0 && !path::is_absolute(p)) { p = path::join(self.cwd, p); }
+        if (self.b.scratch && p.len == 0) {
+            self.fail_msg("E32: No file name (a scratch buffer: :w name)");
+            return false;
+        }
+        if (self.b.path.len == 0 && p.len == 0) {
+            self.fail_msg("E32: No file name");
+            return false;
+        }
+        let keep: bool = self.persist && self.cfg.undofile;
+        let (n, bad) = save_buf(mut &self.b, p, force, keep);
+
+        if (bad.len > 0) {
+            self.fail_msg(bad);
+            return false;
+        }
+        if (str::ends_with(self.b.path, ".ae")) { self.index_stale = true; }
+        if (p.len > 0) { self.b.name = short_name(self.cwd, p); }
+        self.b.ft = self.cfg.filetype(self.b.path);
+        let lines: i64 = self.b.text.count;
+
+        self.say("\"\(self.b.name)\" \(lines)L, \(n)B written");
+        let saved: string = self.b.path;
+
+        self.tree_refresh_if_new(saved);
+        self.git_fetch(true);
+        self.hooks("save", saved);
+        return true;
+    }
+
+    fn tree_refresh_if_new(mut self: &App, p: string) -> void {
+        for (let e: &self::&Entry in &self.tree.rows) {
+            if (str::eq(e.path, p)) {
+                return;
+            }
+        }
+        if (path::is_within(self.tree.root, p)) { self.tree.refresh(); }
+    }
+
+    fn quit_all(mut self: &App, force: bool) -> void {
+        if (!force) {
+            for (let b: BufInfo in self.infos()) {
+                if (b.modified && !b.scratch) {
+                    self.fail_msg("E37: No write since last change: \(b.name) (add ! to override)");
+                    return;
+                }
+            }
+        }
+        self.b.text.close();
+
+        for (let i: i64 in 0..self.others.len) {
+            let o: &self::&Buf = mut &self.others[i];
+
+            o.text.close();
+        }
+        self.stop_job();
+        self.quit = true;
+    }
+
+    fn reload_current(mut self: &App) -> void {
+        match (self.b.reload()) {
+            v => {
+                self.say("\"\(self.b.name)\" read again");
+                self.git_fetch(true);
+            },
+            e: fs::NotFound => { self.fail_msg("\(e.path) is gone"); },
+            e2: fs::PermissionDenied => { self.fail_msg("\(e2.path): permission denied"); },
+            e3: fs::IsADirectory => { self.fail_msg("\(e3.path) is a directory"); },
+            e4: fs::IoError => { self.fail_msg("\(e4.path) cannot be read"); }
+        }
+    }
+
+    fn reload_config(mut self: &App) -> void {
+        let c: Config = cfgm::load(self.cwd);
+        let n: i64 = c.errors.len;
+        let at: i64 = self.split.at;
+
+        self.cfg = c;
+        self.look = look(&self.cfg.themes, self.cfg.theme);
+        self.shape = -1;
+        self.split.at = at;
+        if (n > 0) {
+            self.panel = std::copy(self.cfg.errors);
+            self.panel_title = "configuration errors";
+        } else {
+            self.say("read \(str::join(&self.cfg.files, ", "))");
+        }
+    }
+
     fn file_info(mut self: &App) -> void {
         var nm: string = self.b.name;
 
