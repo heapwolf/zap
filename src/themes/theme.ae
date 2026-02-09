@@ -1,0 +1,123 @@
+//! zap's themes: a theme is a set of named faces (`normal`, `tree.dir`,
+//! `heading`, `status.mode.insert`, ...), each a style. A missing face falls
+//! back by name: `tree.dir`, then `tree`, then `normal`. A theme can
+//! `:inherit` another's faces and override some.
+//!
+//! ```ae,ignore
+//! (theme "mine" :inherit "paper"
+//!   (normal :fg "#202020" :bg "#fbfbf8")
+//!   (heading :fg "#0b7285" :bold true))
+//! (set theme "mine")
+//! ```
+
+import tui from "std/tui";
+import str from "std/string";
+import { Sx, SxKind } from "../sexp.ae";
+import { GROUP_NAMES } from "../syntax.ae";
+
+/// a named style
+export struct Face {
+    export name: string;
+    export style: tui::Style;
+}
+
+/// a theme: name, faces, parent theme
+export struct Theme {
+    export name: string = "";
+    export parent: string = "";
+    export faces: Face[] = [];
+}
+
+/// the resolved faces used for drawing, computed once per theme
+export struct Look {
+    export normal: tui::Style;
+    export gutter: tui::Style = tui::Style {};
+    export gutter_current: tui::Style = tui::Style {};
+    export gutter_error: tui::Style = tui::Style {};
+    export git_add: tui::Style = tui::Style {};       // git signs (git.add, git.change,
+    export git_change: tui::Style = tui::Style {};    //   git.delete; default: the theme's
+    export git_delete: tui::Style = tui::Style {};    //   string, type, error colors)
+    export tree: tui::Style = tui::Style {};
+    export tree_root: tui::Style = tui::Style {};
+    export tree_dir: tui::Style = tui::Style {};
+    export tree_file: tui::Style = tui::Style {};
+    export tree_special: tui::Style = tui::Style {};
+    export tree_open: tui::Style = tui::Style {};
+    export tree_cursor: tui::Style = tui::Style {};
+    export divider: tui::Style = tui::Style {};
+    export status: tui::Style = tui::Style {};
+    export status_file: tui::Style = tui::Style {};
+    export status_info: tui::Style = tui::Style {};
+    export status_end: tui::Style = tui::Style {};
+    export mode_normal: tui::Style = tui::Style {};
+    export mode_insert: tui::Style = tui::Style {};
+    export mode_command: tui::Style = tui::Style {};
+    export mode_tree: tui::Style = tui::Style {};
+    export mode_visual: tui::Style = tui::Style {};
+    export visual: tui::Style = tui::Style {};      // selection (drawn over the text's colors)
+    export menu: tui::Style = tui::Style {};        // command-line completions
+    export menu_selected: tui::Style = tui::Style {};
+    export menu_match: tui::Style = tui::Style {};  // over a row: the typed part of each word
+    export menu_kind: tui::Style = tui::Style {};   // over a row: icons with no syntax color
+    export menu_doc: tui::Style = tui::Style {};    // docs beside the menu
+    export menu_doc_title: tui::Style = tui::Style {};
+    export menu_border: tui::Style = tui::Style {};
+    export search: tui::Style = tui::Style {};
+    export cmdline: tui::Style = tui::Style {};
+    export message: tui::Style = tui::Style {};
+    export error: tui::Style = tui::Style {};
+    export panel: tui::Style = tui::Style {};
+    export dialog: tui::Style = tui::Style {};
+    export sheet_head: tui::Style = tui::Style {};  // spreadsheet column letters and row numbers
+    export sheet_head_current: tui::Style = tui::Style {};  // the cursor's column and row in those
+    export sheet_cursor: tui::Style = tui::Style {};    // cursor cell
+    export sheet_sel: tui::Style = tui::Style {};   // selected cells
+    export sheet_header: tui::Style = tui::Style {};    // header row
+    export sheet_bar: tui::Style = tui::Style {};   // formula bar: cell name and contents
+    export cursor: string = "";          // terminal cursor color ("": terminal default)
+    export syn: tui::Style[] = [];       // by syntax::Group
+}
+
+/// parse a color: "#rrggbb", "default" (terminal's), "none" (show what is
+/// underneath), one of the 16 names ("red", "brightblue", ...), or a palette
+/// index "0".."255"
+export fn color(s: string) -> tui::Color? {
+    let t: string = str::to_lower(str::trim(s));
+
+    if (t.len == 7 && t[0] == '#') {
+        let r: i64 = hex(&t, 1);
+        let g: i64 = hex(&t, 3);
+        let b: i64 = hex(&t, 5);
+
+        if (r < 0 || g < 0 || b < 0) {
+            return none;
+        }
+        return tui::rgb(r, g, b);
+    }
+    if (str::eq(t, "default")) {
+        return tui::Color::Default;
+    }
+    if (str::eq(t, "none")) {
+        return tui::Color::Reset;
+    }
+    let names: string[] = [
+        "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white", "brightblack",
+        "brightred", "brightgreen", "brightyellow", "brightblue", "brightmagenta", "brightcyan",
+        "brightwhite"
+    ];
+
+    for (let i: i64, let nm: string in &names) {
+        if (str::eq(nm, t)) {
+            return tui::ansi(i);
+        }
+    }
+    match (str::parse_int(t)) {
+        n => {
+            if (n >= 0 && n <= 255) {
+                return tui::ansi(n);
+            }
+        },
+        e: str::BadInt => {}
+    }
+    return none;
+}
