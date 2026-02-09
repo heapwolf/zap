@@ -121,3 +121,108 @@ export fn color(s: string) -> tui::Color? {
     }
     return none;
 }
+
+fn hex_digit(c: u8) -> i64 {
+    if (c >= '0' && c <= '9') {
+        return (c as i64) - 48;
+    }
+    if (c >= 'a' && c <= 'f') {
+        return (c as i64) - 87;
+    }
+    return -1;
+}
+
+// value of the two hex digits at s[i], or -1
+fn hex(s: &string, i: i64) -> i64 {
+    let a: i64 = hex_digit(s[i]);
+    let b: i64 = hex_digit(s[i + 1]);
+
+    if (a < 0 || b < 0) {
+        return -1;
+    }
+    return a * 16 + b;
+}
+
+/// parse a face form, `(name :fg "#fff" :bg "#000" :bold true ...)`;
+/// errors go to errs
+export fn face(f: &Sx, mut errs: &string[]) -> Face {
+    var s: tui::Style = tui::Style {};
+    let n: i64 = f.items.len;
+    var i: i64 = 1;
+
+    while (i + 1 < n) {
+        let k: string = f.items[i].text;
+        let v: string = f.items[i + 1].text;
+        let on: bool = str::eq(v, "true");
+
+        if (str::eq(k, ":fg") || str::eq(k, ":bg")) {
+            if (let c = color(v)) {
+                if (str::eq(k, ":fg")) { s.fg = c; } else { s.bg = c; }
+            } else {
+                errs.push("line \(f.line): not a color: \(v)");
+            }
+        } else if (str::eq(k, ":bold")) { s.bold = on; }
+        else if (str::eq(k, ":italic")) { s.italic = on; }
+        else if (str::eq(k, ":underline")) { s.underline = on; }
+        else if (str::eq(k, ":dim")) { s.dim = on; }
+        else if (str::eq(k, ":reverse")) { s.reverse = on; }
+        else if (str::eq(k, ":strike")) { s.strike = on; }
+        else { errs.push("line \(f.line): a face has no \(k)"); }
+        i += 2;
+    }
+    return Face { name: f.head(), style: s };
+}
+
+/// parse a theme form, `(theme "name" [:inherit "other"] faces...)`
+export fn theme(f: &Sx, mut errs: &string[]) -> Theme {
+    var t: Theme = Theme {};
+
+    if (f.items.len > 1) { t.name = f.items[1].text; }
+    let n: i64 = f.items.len;
+    var i: i64 = 2;
+
+    while (i < n) {
+        let it: &f::&Sx = &f.items[i];
+
+        if (it.is(":inherit") && i + 1 < n) {
+            t.parent = f.items[i + 1].text;
+            i += 2;
+            continue;
+        }
+        if (it.kind == SxKind::List) {
+            t.faces.push(face(it, errs));
+        } else {
+            errs.push("line \(it.line): a theme holds faces: (name :fg ...), not \(it.show())");
+        }
+        i += 1;
+    }
+    return t;
+}
+
+// face `face` of theme `name`, searching its parents (none if not found)
+fn find_face(themes: &Theme[], name: string, face: string, depth: i64) -> tui::Style? {
+    if (depth > 8) {
+        return none;
+    }
+    var k: i64 = themes.len - 1;
+
+    while (k >= 0) {
+        let t: &themes::&Theme = &themes[k];
+
+        k -= 1;
+        if (!str::eq(t.name, name)) { continue; }
+        var j: i64 = t.faces.len - 1;
+
+        while (j >= 0) {
+            if (str::eq(t.faces[j].name, face)) {
+                return std::copy(t.faces[j].style);
+            }
+            j -= 1;
+        }
+        if (t.parent.len > 0) {
+            return find_face(themes, t.parent, face, depth + 1);
+        }
+        return none;
+    }
+    return none;
+}
