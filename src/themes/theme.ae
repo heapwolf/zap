@@ -226,3 +226,147 @@ fn find_face(themes: &Theme[], name: string, face: string, depth: i64) -> tui::S
     }
     return none;
 }
+
+/// the style of `face` in theme `name`, falling back by name (`a.b.c`,
+/// `a.b`, `a`, `normal`)
+export fn style(themes: &Theme[], name: string, face: string) -> tui::Style {
+    var f: string = face;
+
+    while (true) {
+        if (let s = find_face(themes, name, f, 0)) {
+            return s;
+        }
+        let dot: i64 = str::rfind(f, ".") ?? -1;
+
+        if (dot < 0) { break; }
+        f = str::substr(f, 0, dot);
+    }
+    if (let s = find_face(themes, name, "normal", 0)) {
+        return s;
+    }
+    return tui::Style {};
+}
+
+// face merged over base (its unset parts come from base)
+fn over(themes: &Theme[], name: string, face: string, base: &tui::Style) -> tui::Style {
+    let s: tui::Style = style(themes, name, face);
+
+    return tui::merge(base, &s);
+}
+
+/// the resolved Look of theme `name`
+export fn look(themes: &Theme[], name: string) -> Look {
+    let normal: tui::Style = style(themes, name, "normal");
+    var l: Look = Look { normal: std::copy(normal) };
+
+    l.gutter = over(themes, name, "gutter", &normal);
+    l.gutter_current = over(themes, name, "gutter.current", &l.gutter);
+    l.gutter_error = over(themes, name, "gutter.error", &l.gutter);
+    l.tree = over(themes, name, "tree", &normal);
+    l.tree_root = over(themes, name, "tree.root", &l.tree);
+    l.tree_dir = over(themes, name, "tree.dir", &l.tree);
+    l.tree_file = over(themes, name, "tree.file", &l.tree);
+    l.tree_special = over(themes, name, "tree.special", &l.tree);
+    l.tree_open = over(themes, name, "tree.open", &l.tree);
+    l.tree_cursor = over(themes, name, "tree.cursor", &l.tree);
+    l.divider = over(themes, name, "divider", &l.tree);
+    l.status = over(themes, name, "status", &normal);
+    l.status_file = over(themes, name, "status.file", &l.status);
+    l.status_info = over(themes, name, "status.info", &l.status);
+    l.status_end = over(themes, name, "status.end", &l.status);
+    l.mode_normal = over(themes, name, "status.mode.normal", &l.status);
+    l.mode_insert = over(themes, name, "status.mode.insert", &l.mode_normal);
+    l.mode_command = over(themes, name, "status.mode.command", &l.mode_normal);
+    l.mode_tree = over(themes, name, "status.mode.tree", &l.mode_normal);
+    l.mode_visual = over(themes, name, "status.mode.visual", &l.mode_normal);
+    l.visual = style(themes, name, "visual");
+    l.search = over(themes, name, "search", &normal);
+    l.panel = over(themes, name, "panel", &normal);
+    l.menu = over(themes, name, "menu", &l.panel);
+    l.menu_selected = over(themes, name, "menu.selected", &l.search);
+    l.menu_match = own(themes, name, "menu.match");
+    l.menu_kind = own(themes, name, "menu.kind");
+    l.menu_doc = over(themes, name, "menu.doc", &l.menu);
+    l.menu_doc_title = own(themes, name, "menu.doc.title");
+    l.menu_border = own(themes, name, "menu.border");
+    l.cmdline = over(themes, name, "cmdline", &normal);
+    l.message = over(themes, name, "message", &l.cmdline);
+    l.error = over(themes, name, "error", &l.cmdline);
+    l.dialog = over(themes, name, "dialog", &normal);
+    // (sheet faces a theme omits default to similar faces, not to the name
+    // fallback, which would give normal)
+    l.sheet_head = tui::merge(&l.status, &own(themes, name, "sheet.head"));
+    l.sheet_head_current = tui::merge(&l.mode_normal, &own(themes, name, "sheet.head.current"));
+    var cur: tui::Style = tui::merge(&normal, &l.search);
+
+    cur.bold = true;
+    l.sheet_cursor = tui::merge(&cur, &own(themes, name, "sheet.cursor"));
+    l.sheet_sel = tui::merge(
+        &tui::merge(&normal, &l.visual), &own(themes, name, "sheet.selection")
+    );
+    var bold: tui::Style = std::copy(normal);
+
+    bold.bold = true;
+    l.sheet_header = tui::merge(&bold, &own(themes, name, "sheet.header"));
+    // (the bar uses the grid's background)
+    l.sheet_bar = tui::merge(&normal, &own(themes, name, "sheet.bar"));
+    l.cursor = "";
+    if (let c = cursor_color(themes, name)) { l.cursor = c; }
+    l.git_add = sign(themes, name, "git.add", "string", &l.gutter);
+    l.git_change = sign(themes, name, "git.change", "type", &l.gutter);
+    l.git_delete = sign(themes, name, "git.delete", "error.text", &l.gutter);
+
+    for (let g: string in &GROUP_NAMES) {
+        // (the error group uses error.text; "error" is the command line's)
+        var face: string = g;
+
+        if (str::eq(g, "error")) { face = "error.text"; }
+        // groups merge over normal; an omitted one is plain normal (no name fallback)
+        if (let s = find_face(themes, name, face, 0)) {
+            l.syn.push(tui::merge(&normal, &s));
+        } else {
+            l.syn.push(std::copy(normal));
+        }
+    }
+    return l;
+}
+
+// a git sign's face over the gutter; if the theme lacks it, take the fg of
+// syntax face `like` (so themes without git faces still get three colors)
+fn sign(
+    themes: &Theme[], name: string, face: string, like: string, gutter: &tui::Style
+) -> tui::Style {
+    var s: tui::Style = tui::merge(gutter, &own(themes, name, face));
+
+    if (find_face(themes, name, face, 0) == none) {
+        s.fg = std::copy(own(themes, name, like).fg);
+    }
+    s.bold = false;
+    return s;
+}
+
+// face from the theme or its parents, with no name fallback (for faces
+// drawn over others: only the colors they set apply)
+fn own(themes: &Theme[], name: string, face: string) -> tui::Style {
+    if (let s = find_face(themes, name, face, 0)) {
+        return s;
+    }
+    return tui::Style {};
+}
+
+// the cursor face's background as "#rrggbb", for the terminal cursor
+// (as with any face, a later definition of the theme wins)
+fn cursor_color(themes: &Theme[], name: string) -> string? {
+    if (let s = find_face(themes, name, "cursor", 0)) {
+        if (let tui::Color::Rgb { r, g, b } = s.bg) {
+            return "#\(hex2(r))\(hex2(g))\(hex2(b))";
+        }
+    }
+    return none;
+}
+
+fn hex2(n: i64) -> string {
+    let digits: string = "0123456789abcdef";
+
+    return "\(str::substr(digits, (n / 16) % 16, 1))\(str::substr(digits, n % 16, 1))";
+}
