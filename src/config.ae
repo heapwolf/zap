@@ -907,6 +907,130 @@ let DEFAULTS_REST: string = """;; ---- files -----------------------------------
 (map normal "]d" "cnext")
 (map normal "[d" "cprev")
 
+;; ---- the Aela compiler's tools --------------------------------------------
+
+(addin "aela"
+  (filetype "aela" :ext (".ae") :syntax "aela" :comment "//" :icon "")
+  (command "check" :run ("aec" "%" "--check-only" "--message-format" "short")
+    :save true :errors true :show "quiet" :doc "check the file: its errors in the gutter")
+  (command "build" :run ("aec" "%" "-o" "%:r" "--message-format" "short")
+    :save true :errors true :doc "build the file into %:r")
+  (command "run" :run ("sh" "-c" "aec \"$1\" -o \"$2\" --message-format short && \"$2\"" "sh" "%" "%:r")
+    :save true :errors true :show "buffer" :doc "build the file and run it")
+  (command "test" :run ("aec" "test" "%") :save true :show "buffer" :doc "the file's #test functions")
+  (command "fmt" :run ("aec" "fmt" "%") :save true :reload true :show "quiet" :doc "format the file")
+  (command "def" :run ("aec" "query" "def" "%" "<cword>") :show "jump" :doc "go to what the word names")
+  (command "refs" :run ("aec" "query" "refs" "%" "<cword>") :errors true :doc "where the word is used")
+  (command "explain" :run ("aec" "explain" "<cword>") :show "buffer" :doc "what an error code means")
+  (command "docs" :run ("aec" "docs" "<cword>") :show "buffer" :doc "search the language docs")
+  (command "outline" :run ("aec" "outline" "%") :show "buffer" :doc "the file's declarations")
+  (command "symbols" :run ("aec" "outline" "--deps" "<cwd>") :show "outline"
+    :doc "the project's declarations and its imports', for the palette and completion")
+  (on "save" "*.ae" "check")
+  (map normal "gd" "def")
+  (map normal "gr" "refs")
+  (map normal "K" "explain")
+  (map normal "<leader>c" "check")
+  (map normal "<leader>r" "run")
+  (map normal "<leader>t" "test"))
+""";
+
+/// the built-in configuration (the user's init.zap, read after, may change
+/// any of it): options, base themes, then the rest
+export let DEFAULTS: string = "\(DEFAULTS_TOP)\(base::BASE)\(DEFAULTS_REST)";
+
+#test fn reads_the_defaults() -> i32 {
+    var c: Config = Config {};
+
+    c.read(DEFAULTS, "<defaults>");
+    c.read_builtin_themes();
+    if (c.errors.len > 0) {
+        for (let e: string in &c.errors) { println(e); }
+        return 1;
+    }
+    if (c.themes.len != 49 || !str::eq(c.theme, "paper")) {
+        return 2;
+    }
+    let ft: FileType = c.filetype("notes/HOSTED.md");
+
+    if (!str::eq(ft.syntax, "markdown")) {
+        return 3;
+    }
+    if (!str::eq(c.filetype("v1/src/main.ae").syntax, "aela")) {
+        return 4;
+    }
+    if (!str::eq(c.filetype("a/b.swift").syntax, "swift") ||
+        !str::eq(c.filetype("x.h").syntax, "c") ||
+        !str::eq(c.filetype("app.tsx").syntax, "js") ||
+        !str::eq(c.filetype("a.hxx").syntax, "cpp") ||
+            !str::eq(c.filetype("b.cxx").syntax, "cpp") ||
+        !str::eq(c.filetype("c.hpp").syntax, "cpp") ||
+            !str::eq(c.filetype("d.cpp").syntax, "cpp") ||
+            !str::eq(c.filetype("s.css").syntax, "css") ||
+        !str::eq(c.filetype("index.html").syntax, "html")) {
+        return 9;
+    }
+    if (!str::eq(c.filetype("tool.py").syntax, "python") ||
+        !str::eq(c.filetype("flow.mmd").syntax, "mermaid") ||
+        !str::eq(c.filetype("boot.asm").syntax, "asm") ||
+            !str::eq(c.filetype("regs.inc").syntax, "asm") ||
+        !str::eq(c.filetype("start.S").comment, "//") ||
+            !str::eq(c.filetype("start.s").comment, "#")) {
+        return 10;
+    }
+    if (let cmd = c.command("check")) {
+        if (!cmd.errors || !cmd.save || cmd.run.len != 5) {
+            return 5;
+        }
+    } else {
+        return 6;
+    }
+    c.read("(disable \"aela\")", "<test>");
+    if (c.command("check") != none) {
+        return 7;
+    }
+    c.read("(set tabstop 99) (bogus)", "<test>");
+    if (c.errors.len != 2) {
+        return 8;
+    }
+    return 0;
+}
+
+#test fn parses_key_specs() -> i32 {
+    let a: string[] = parse_keys("<C-S>x", "<Space>");
+
+    if (a.len != 2 || !str::eq(a[0], "<C-s>") || !str::eq(a[1], "x")) {
+        return 1;
+    }
+    let b: string[] = parse_keys("<leader>e", "<Space>");
+
+    if (b.len != 2 || !str::eq(b[0], "<Space>")) {
+        return 2;
+    }
+    let c: string[] = parse_keys("<cr><s-tab><lt>gg", "");
+
+    if (c.len != 5 || !str::eq(c[0], "<CR>") || !str::eq(c[1], "<S-Tab>") ||
+        !str::eq(c[2], "<lt>")) {
+        return 3;
+    }
+    if (!str::eq(token(&tui::key("ctrl+s")), "<C-s>")) {
+        return 4;
+    }
+    if (!str::eq(token(&tui::key("enter")), "<CR>")) {
+        return 5;
+    }
+    if (!str::eq(token(&tui::key("shift+tab")), "<S-Tab>")) {
+        return 6;
+    }
+    if (!str::eq(token(&tui::key("space")), "<Space>")) {
+        return 7;
+    }
+    if (!str::eq(token(&tui::key("G")), "G")) {
+        return 8;
+    }
+    return 0;
+}
+
 #test fn local_config_once_trusted() -> i32 {
     let tmp: string = fs::temp_dir();
     let base: string = "\(tmp)/zap-local-config";
