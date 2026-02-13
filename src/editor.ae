@@ -3446,3 +3446,50 @@ fn save_buf(mut b: &Buf, p: string, force: bool, keep: bool) -> (i64, string) {
     }
     return (0, "");
 }
+
+// sets b's committed lines to base (tracked: it has some); its signs are recomputed
+fn take_base(mut b: &Buf, tracked: bool, base: i64[]) -> void {
+    b.git_tracked = tracked;
+    b.git_base = base;
+    b.signs = [];
+    b.signs_gen = -1;
+}
+
+fn is_dir(p: string) -> bool {
+    match (fs::info(p)) {
+        i => { return i.kind == fs::Kind::Dir; },
+        e: fs::NotFound => {}, e2: fs::PermissionDenied => {}, e3: fs::IoError => {}
+    }
+    return false;
+}
+
+// a command line's words: split at spaces, except inside '...' or "..."
+// (quotes removed), as a shell does for simple words
+fn shell_words(s: string) -> string[] {
+    var out: string[] = [];
+    var cur: str::Builder = str::Builder {};
+    var has: bool = false;
+    var quote: u8 = 0;
+
+    for (let i: i64 in 0..s.len) {
+        let c: u8 = s[i];
+
+        if (quote != 0) {
+            if (c == quote) { quote = 0; } else { cur.add_byte(c); }
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            quote = c;
+            has = true;
+        } else if (c == ' ' || c == '\t') {
+            if (has) { out.push(cur.to_string()); }
+            cur = str::Builder {};
+            has = false;
+        } else {
+            cur.add_byte(c);
+            has = true;
+        }
+    }
+    if (has) { out.push(cur.to_string()); }
+    return out;
+}
