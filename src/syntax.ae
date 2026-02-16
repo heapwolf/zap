@@ -1,0 +1,105 @@
+//! zap's syntax highlighting: a small lexer per language, one line at a
+//! time. Each line starts in a state (inside a block comment, a fenced code
+//! block, ...) and returns the next line's start state, so a buffer saves
+//! the state at every 64th line and highlights only on-screen lines, from
+//! the nearest saved one (buffer.ae). Only a line's first 2000 bytes are
+//! highlighted; the rest is plain.
+//!
+//! Aela, Markdown, zap's s-expressions and shell are here; C, C++, Swift,
+//! JavaScript, CSS, HTML, Python, Mermaid and assembly each have a file in
+//! syntax/ (shared code, including the C family's lexer, is in
+//! syntax/core.ae). A Markdown ```lang fence is highlighted as lang.
+
+import str from "std/string";
+import {
+    Group, GROUP_NAMES, Hl, add, is_ident_start, is_ident, is_digit, limit_to, string_end,
+    number_end, one_of, Words, words
+} from "syntax/core.ae";
+import c from "syntax/c.ae";
+import cpp from "syntax/cpp.ae";
+import swift from "syntax/swift.ae";
+import js from "syntax/js.ae";
+import css from "syntax/css.ae";
+import html from "syntax/html.ae";
+import python from "syntax/python.ae";
+import sexpl from "syntax/sexp.ae";
+import json from "syntax/json.ae";
+import mermaid from "syntax/mermaid.ae";
+import asm from "syntax/asm.ae";
+
+export Group;
+export Hl;
+export GROUP_NAMES;
+
+/// languages with a lexer (keep in sync with line's match)
+export let LANGS: string[] = [
+    "aela", "markdown", "sexp", "shell", "c", "cpp", "swift", "js", "css", "html", "python",
+    "mermaid", "asm", "json"
+];
+
+/// valid values for a filetype's :syntax: a language, csv or tsv (a
+/// spreadsheet), or "" (plain text)
+export fn valid(lang: string) -> bool {
+    return lang.len == 0 || str::eq(lang, "csv") || str::eq(lang, "tsv") || known(lang);
+}
+
+/// the languages as a space-separated list ("aela markdown ...")
+export fn lang_names() -> string { return str::join(&LANGS, " "); }
+
+/// is there a lexer for lang?
+export fn known(lang: string) -> bool {
+    for (let l: string in &LANGS) {
+        if (str::eq(l, lang)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// highlight line in lang, starting in state; out gets the pieces (in
+/// order, non-overlapping; gaps are Normal) -> the next line's start state
+export fn line(lang: string, text: &string, state: i64, mut out: &Hl[]) -> i64 {
+    let n: i64 = text.len;
+
+    match (lang) {
+        "aela" => { return aela(text, state, out); },
+        "markdown" => { return markdown(text, state, out); },
+        "sexp" => { return sexpl::line(text, 0, n, state, out); },
+        "json" => { return json::line(text, 0, n, state, out); },
+        "shell" => { return shell(text, out); },
+        "c" => { return c::line(text, 0, n, state, out); },
+        "cpp" => { return cpp::line(text, 0, n, state, out); },
+        "swift" => { return swift::line(text, 0, n, state, out); },
+        "js" => { return js::line(text, 0, n, state, out); },
+        "css" => { return css::line(text, 0, n, state, out); },
+        "html" => { return html::line(text, 0, n, state, out); },
+        "python" => { return python::line(text, 0, n, state, out); },
+        "mermaid" => { return mermaid::line(text, 0, n, state, out); },
+        "asm" => { return asm::line(text, 0, n, state, out); },
+        _ => { return 0; }
+    }
+    return 0;
+}
+
+fn limit(text: &string) -> i64 { return limit_to(text, 0, text.len); }
+
+// ---- Aela ------------------------------------------------------------------
+
+let AELA_KEYWORDS: string[] = [
+    "let", "var", "fn", "async", "if", "in", "else", "while", "for", "return", "break",
+    "continue", "await", "where", "as", "struct", "impl", "task", "pure", "enum", "match", "type",
+    "arena", "import", "export", "from", "interface", "failure", "fail", "reserve", "weak",
+    "static", "mut", "public", "select", "extern", "packed", "new", "work"
+];
+
+let AELA_TYPES: string[] = [
+    "u8", "i8", "u16", "i16", "u32", "i32", "u64", "i64", "f32", "f64", "bool", "char", "string",
+    "void", "Duration", "Self"
+];
+
+let AELA_CONSTANTS: string[] = ["true", "false", "none", "self"];
+
+// the three word lists for lookup (keywords 0, types 1, constants 2)
+let AELA_WORDS: Words = words(
+    &[std::copy(AELA_KEYWORDS), std::copy(AELA_TYPES), std::copy(AELA_CONSTANTS)]
+);
