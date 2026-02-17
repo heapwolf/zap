@@ -103,3 +103,147 @@ let AELA_CONSTANTS: string[] = ["true", "false", "none", "self"];
 let AELA_WORDS: Words = words(
     &[std::copy(AELA_KEYWORDS), std::copy(AELA_TYPES), std::copy(AELA_CONSTANTS)]
 );
+
+/// lang's reserved words (keywords, types, constants), for completion
+export fn keywords(lang: string) -> string[] {
+    var out: string[] = [];
+    var sets: string[][] = [];
+
+    match (lang) {
+        "aela" => {
+            sets = [std::copy(AELA_KEYWORDS), std::copy(AELA_TYPES), std::copy(AELA_CONSTANTS)];
+        },
+        "c" => { sets = [std::copy(c::KEYWORDS), std::copy(c::TYPES), std::copy(c::CONSTANTS)]; },
+        "cpp" => {
+            sets = [std::copy(cpp::KEYWORDS), std::copy(cpp::TYPES), std::copy(cpp::CONSTANTS)];
+        },
+        "swift" => {
+            sets = [
+                std::copy(swift::KEYWORDS), std::copy(swift::TYPES), std::copy(swift::CONSTANTS)
+            ];
+        },
+        "js" => {
+            sets = [std::copy(js::KEYWORDS), std::copy(js::TYPES), std::copy(js::CONSTANTS)];
+        },
+        "css" => { sets = [std::copy(css::KEYWORDS)]; },
+        "html" => { sets = [std::copy(html::KEYWORDS)]; },
+        "python" => {
+            sets = [
+                std::copy(python::KEYWORDS), std::copy(python::TYPES), std::copy(python::CONSTANTS)
+            ];
+        },
+        "mermaid" => { sets = [std::copy(mermaid::KEYWORDS), std::copy(mermaid::CONSTANTS)]; },
+        "sexp" => { sets = [std::copy(sexpl::DEFINERS), std::copy(sexpl::CONSTANTS)]; },
+        "json" => { sets = [std::copy(json::CONSTANTS)]; },
+        "asm" => { sets = [std::copy(asm::KEYWORDS), std::copy(asm::TYPES)]; },
+        _ => {}
+    }
+
+    for (let set: string[] in &sets) {
+        for (let w: string in &set) { out.push(w); }
+    }
+    return out;
+}
+
+// states: 0 code, 1 inside /* */
+fn aela(text: &string, state: i64, mut out: &Hl[]) -> i64 {
+    let n: i64 = limit(text);
+    var i: i64 = 0;
+
+    if (state == 1) {
+        let close: i64 = str::find(*text, "*/") ?? -1;
+
+        if (close < 0) {
+            add(out, 0, n, Group::Comment);
+            return 1;
+        }
+        add(out, 0, close + 2, Group::Comment);
+        i = close + 2;
+    }
+
+    while (i < n) {
+        let c: u8 = text[i];
+
+        if (c == '/' && i + 1 < n && text[i + 1] == '/') {
+            add(out, i, n, Group::Comment);
+            return 0;
+        }
+        if (c == '/' && i + 1 < n && text[i + 1] == '*') {
+            let close: i64 = str::find_from(*text, "*/", i + 2) ?? -1;
+
+            if (close < 0) {
+                add(out, i, n, Group::Comment);
+                return 1;
+            }
+            add(out, i, close + 2, Group::Comment);
+            i = close + 2;
+            continue;
+        }
+        if (c == '"') {
+            let j: i64 = string_end(text, i, n, '"');
+
+            add(out, i, j, Group::String);
+            i = j;
+            continue;
+        }
+        if (c == '`') {
+            var j: i64 = i + 1;
+
+            while (j < n && text[j] != '`') { j += 1; }
+            if (j < n) { j += 1; }
+            add(out, i, j, Group::String);
+            i = j;
+            continue;
+        }
+        if (c == '\'') {
+            let j: i64 = string_end(text, i, n, '\'');
+
+            if (j - i <= 12) {
+                add(out, i, j, Group::String);
+                i = j;
+                continue;
+            }
+        }
+        if (c == '#' && i + 1 < n && is_ident_start(text[i + 1])) {
+            var j: i64 = i + 1;
+
+            while (j < n && is_ident(text[j])) { j += 1; }
+            add(out, i, j, Group::Constant);
+            i = j;
+            continue;
+        }
+        if (is_digit(c)) {
+            let j: i64 = number_end(text, i, n);
+
+            add(out, i, j, Group::Number);
+            i = j;
+            continue;
+        }
+        if (is_ident_start(c)) {
+            var j: i64 = i;
+
+            while (j < n && is_ident(text[j])) { j += 1; }
+            let kind: i64 = AELA_WORDS.kind_at(text, i, j);
+
+            if (kind == 0) {
+                add(out, i, j, Group::Keyword);
+            } else if (kind == 1) {
+                add(out, i, j, Group::Type);
+            } else if (kind == 2) {
+                add(out, i, j, Group::Constant);
+            } else if (c >= 'A' && c <= 'Z') {
+                add(out, i, j, Group::Type);
+            } else if (j < n && text[j] == '(') {
+                add(out, i, j, Group::Function);
+            }
+            i = j;
+            continue;
+        }
+        if (c == '?' || c == '&' || c == '|' || c == '=' || c == '!' || c == '<' || c == '>' ||
+            c == '+' || c == '-' || c == '*' || c == '%' || c == ':') {
+            add(out, i, i + 1, Group::Operator);
+        }
+        i += 1;
+    }
+    return 0;
+}
