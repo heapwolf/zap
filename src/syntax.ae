@@ -247,3 +247,128 @@ fn aela(text: &string, state: i64, mut out: &Hl[]) -> i64 {
     }
     return 0;
 }
+
+// ---- Markdown --------------------------------------------------------------
+
+// languages a ``` fence can name, and the names it accepts for each
+let FENCE_LANGS: string[] = [
+    "aela", "sexp", "shell", "c", "cpp", "swift", "js", "css", "html", "python", "mermaid", "asm",
+    "json"
+];
+let FENCE_NAMES: string[][] = [
+    ["aela", "ae"],
+    [
+        "sexp", "zap", "lisp", "scheme", "clojure", "clj", "edn", "racket", "elisp", "emacs-lisp",
+        "common-lisp", "fennel", "s-expression"
+    ], ["shell", "sh", "bash", "zsh", "console"],
+    ["c", "h"], ["cpp", "c++", "cxx", "hpp"], ["swift"],
+    ["js", "javascript", "ts", "typescript", "jsx", "tsx"], ["css"], ["html", "xml", "svg"],
+    ["python", "py", "python3", "pyi"], ["mermaid", "mmd"],
+    ["asm", "nasm", "masm", "gas", "s", "x86asm", "armasm", "assembly"],
+    ["json", "jsonc", "json5", "jsonl", "ndjson", "geojson"]
+];
+
+// the fence language a ```name opens (-1: none known)
+fn fence_lang(text: &string, at: i64, n: i64) -> i64 {
+    var i: i64 = at;
+
+    while (i < n && (text[i] == '`' || text[i] == ' ' || text[i] == '{' || text[i] == '.')) {
+        i += 1;
+    }
+    var j: i64 = i;
+
+    while (j < n && text[j] != ' ' && text[j] != '}' && text[j] != ',' && text[j] != '`') {
+        j += 1;
+    }
+    let name: string = str::to_lower(str::substr(*text, i, j - i));
+
+    for (let k: i64, let names: string[] in &FENCE_NAMES) {
+        if (one_of(&name, &names)) {
+            return k;
+        }
+    }
+    return -1;
+}
+
+// states: 0 text, 1 inside a ``` fence of unknown language, 2 + k +
+// len(FENCE_LANGS) * s inside a FENCE_LANGS[k] fence, its lexer in state s
+fn markdown(text: &string, state: i64, mut out: &Hl[]) -> i64 {
+    let n: i64 = limit(text);
+    var lead: i64 = 0;
+
+    while (lead < n && text[lead] == ' ') { lead += 1; }
+    let fence: bool = n - lead >= 3 && text[lead] == '`' && text[lead + 1] == '`' &&
+        text[lead + 2] == '`';
+
+    if (state >= 1) {
+        if (fence) {
+            add(out, 0, n, Group::Code);
+            return 0;
+        }
+        if (state == 1) {
+            add(out, 0, n, Group::Code);
+            return 1;
+        }
+        let nl: i64 = FENCE_LANGS.len;
+        let k: i64 = (state - 2) % nl;
+        let inner: i64 = line(FENCE_LANGS[k], text, (state - 2) / nl, out);
+
+        return 2 + k + nl * inner;
+    }
+    if (fence) {
+        add(out, 0, n, Group::Code);
+        let k: i64 = fence_lang(text, lead, n);
+
+        if (k < 0) {
+            return 1;
+        }
+        return 2 + k;
+    }
+    if (lead >= 4) {
+        add(out, 0, n, Group::Code);  // an indented code block
+        return 0;
+    }
+    var i: i64 = lead;
+
+    // a heading: #s plain, text a heading
+    if (i < n && text[i] == '#') {
+        var j: i64 = i;
+
+        while (j < n && text[j] == '#') { j += 1; }
+        if (j - i <= 6 && (j == n || text[j] == ' ')) {
+            add(out, j, n, Group::Heading);
+            return 0;
+        }
+    }
+    if (i < n && text[i] == '>') {
+        add(out, i, n, Group::Quote);
+        return 0;
+    }
+    // a rule: --- *** ___
+    if (n - i >= 3 && (text[i] == '-' || text[i] == '*' || text[i] == '_')) {
+        var all: bool = true;
+
+        for (let j: i64 in i..n) {
+            if (text[j] != text[i] && text[j] != ' ') { all = false; }
+        }
+        if (all) {
+            add(out, i, n, Group::Punct);
+            return 0;
+        }
+    }
+    // a list item marker
+    if (i + 1 < n && (text[i] == '-' || text[i] == '*' || text[i] == '+') && text[i + 1] == ' ') {
+        add(out, i, i + 1, Group::ListMark);
+        i += 2;
+    } else if (i < n && is_digit(text[i])) {
+        var j: i64 = i;
+
+        while (j < n && is_digit(text[j])) { j += 1; }
+        if (j + 1 < n && (text[j] == '.' || text[j] == ')') && text[j + 1] == ' ') {
+            add(out, i, j + 1, Group::ListMark);
+            i = j + 2;
+        }
+    }
+    inline_md(text, i, n, out);
+    return 0;
+}
