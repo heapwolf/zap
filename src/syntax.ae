@@ -372,3 +372,114 @@ fn markdown(text: &string, state: i64, mut out: &Hl[]) -> i64 {
     inline_md(text, i, n, out);
     return 0;
 }
+
+// emphasis, code and links in text[i..n]
+fn inline_md(text: &string, start: i64, n: i64, mut out: &Hl[]) -> void {
+    var i: i64 = start;
+
+    while (i < n) {
+        let c: u8 = text[i];
+
+        if (c == '`') {
+            var j: i64 = i + 1;
+
+            while (j < n && text[j] != '`') { j += 1; }
+            if (j < n) {
+                add(out, i, j + 1, Group::Code);
+                i = j + 1;
+                continue;
+            }
+        }
+        if ((c == '*' || c == '_') && i + 1 < n && text[i + 1] == c) {
+            let close: i64 = str::find_from(*text, str::substr(*text, i, 2), i + 2) ?? -1;
+
+            if (close > i + 2 && close + 2 <= n) {
+                add(out, i, close + 2, Group::Bold);
+                i = close + 2;
+                continue;
+            }
+        }
+        if ((c == '*' || c == '_') && i + 1 < n && text[i + 1] != ' ' &&
+            (i == start || text[i - 1] == ' ' || text[i - 1] == '(')) {
+            var j: i64 = i + 1;
+
+            while (j < n && text[j] != c) { j += 1; }
+            if (j < n && j > i + 1) {
+                add(out, i, j + 1, Group::Italic);
+                i = j + 1;
+                continue;
+            }
+        }
+        if (c == '[') {
+            // [text](url): text a link, url a url, brackets plain
+            let close: i64 = str::find_from(*text, "](", i + 1) ?? -1;
+
+            if (close > i && close < n) {
+                let end: i64 = str::find_from(*text, ")", close + 2) ?? -1;
+
+                if (end > close && end < n) {
+                    add(out, i + 1, close, Group::Link);
+                    add(out, close + 2, end, Group::Url);
+                    i = end + 1;
+                    continue;
+                }
+            }
+        }
+        if (c == '<' && i + 1 < n && (str::starts_with(str::substr(*text, i + 1, 8), "http") ||
+            str::starts_with(str::substr(*text, i + 1, 8), "mailto"))) {
+            let end: i64 = str::find_from(*text, ">", i) ?? -1;
+
+            if (end > i) {
+                add(out, i + 1, end, Group::Url);
+                i = end + 1;
+                continue;
+            }
+        }
+        if (c == '\\' && i + 1 < n) {
+            add(out, i, i + 2, Group::Escape);
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+}
+
+// ---- s-expressions (zap's own configuration) --------------------------------
+
+// ---- shell -----------------------------------------------------------------
+
+fn shell(text: &string, mut out: &Hl[]) -> i64 {
+    let n: i64 = limit(text);
+    var i: i64 = 0;
+
+    while (i < n) {
+        let c: u8 = text[i];
+
+        if (c == '#' && (i == 0 || text[i - 1] == ' ' || text[i - 1] == '\t')) {
+            add(out, i, n, Group::Comment);
+            return 0;
+        }
+        if (c == '"' || c == '\'') {
+            let j: i64 = string_end(text, i, n, c);
+
+            add(out, i, j, Group::String);
+            i = j;
+            continue;
+        }
+        if (c == '$') {
+            var j: i64 = i + 1;
+
+            if (j < n && text[j] == '{') {
+                while (j < n && text[j] != '}') { j += 1; }
+                if (j < n) { j += 1; }
+            } else {
+                while (j < n && is_ident(text[j])) { j += 1; }
+            }
+            add(out, i, j, Group::Constant);
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+    return 0;
+}
