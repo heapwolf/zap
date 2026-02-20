@@ -917,6 +917,77 @@ impl App {
         if (self.b.left < 0) { self.b.left = 0; }
     }
 
+    // ---- painting: what the next frame shows ------------------------------------------
+
+    // highlights of lines hl_from.. (and the state after each), while buffer,
+    // text and syntax are unchanged: a cursor-only frame rereads none, a
+    // scroll down only the new lines
+    fn cached_hls(mut self: &App, i: i64, t: &string, state: i64, lang: &string) -> (Hl[], i64) {
+        let k: i64 = i - self.hl_from;
+
+        if (k >= 0 && k < self.hl_rows.len) {
+            return (std::copy(self.hl_rows[k]), self.hl_after[k]);
+        }
+        var hls: Hl[] = [];
+        var after: i64 = state;
+
+        if (syntax::known(*lang)) { after = syntax::line(*lang, t, state, mut &hls); }
+        if (k == self.hl_rows.len) {
+            self.hl_rows.push(std::copy(hls));
+            self.hl_after.push(after);
+        }
+        return (hls, after);
+    }
+
+    /// reads (and highlights) the lines and tree rows the next frame shows: only
+    /// those on screen
+    export fn prepare(mut self: &App) -> void {
+        if (self.copiers.len > 0) { self.reap_copiers(); }
+        if (self.msg_wait() == 0) { self.msg = ""; }
+        if (self.gits.len > 0) { self.git_poll(); }
+        self.git_update();
+        if (self.picking.len > 0) { self.filter_picks(); }
+        var bottom: i64 = 1;
+
+        if (self.cmd_line_shown()) { bottom += 1; }
+        bottom += self.panel_height();
+        self.edit_h = self.rows - bottom;
+        if (self.edit_h < 1) { self.edit_h = 1; }
+        self.tree_h = self.edit_h;
+        var tw: i64 = 0;
+
+        if (self.split.at > 0) {
+            tw = self.split.at;
+            if (tw > self.cols - 10) { tw = self.cols - 10; }
+            if (tw < 1) { tw = 1; }
+            tw += 1;            // divider
+        }
+        self.edit_x = tw;
+        self.edit_w = self.cols - tw;
+        let count: i64 = self.b.text.count;
+
+        self.gutter = 0;
+        if (self.cfg.number) {
+            var digits: i64 = ("\(count)").len;
+
+            if (digits < 3) { digits = 3; }
+            self.gutter = digits + 2;
+        } else if (self.cfg.gitsigns && self.b.git_tracked) {
+            self.gutter = 1;            // (sign column only)
+        }
+        self.scroll();
+        if (self.viewing()) {
+            self.vis.clear();
+            self.prepare_diagram();
+        } else if (self.sheet_on()) {
+            self.vis.clear();
+            self.prepare_sheet();
+        } else {
+            self.prepare_lines();
+        }
+        self.prepare_tree();
+    }
+
     // editor window
     fn prepare_lines(mut self: &App) -> void {
         self.vis.clear();
