@@ -536,6 +536,113 @@ impl Matcher {
     /// do the saved states reach line i?
     export fn reaches(self: &Buf, i: i64) -> bool { return i / STEP < self.valid; }
 
+    /// find more states toward line goal, reading at most budget lines ->
+    /// do they reach it now?
+    export fn find_states(mut self: &Buf, goal: i64, budget: i64) -> bool {
+        var left: i64 = budget;
+        let lang: string = self.ft.syntax;
+        var out: Hl[] = [];
+
+        while (!self.reaches(goal) && left > 0) {
+            let k: i64 = self.valid - 1;
+            var s: i64 = self.states[k];
+            var l: i64 = k * STEP;
+            let end: i64 = l + STEP;
+
+            if (end > self.text.count) {
+                return true;
+            }
+
+            while (l < end) {
+                let t: string = self.text.get(l);
+
+                s = syntax::line(lang, &t, s, mut &out);
+                out.clear();
+                l += 1;
+            }
+
+            while (self.states.len <= k + 1) { self.states.push(0); }
+            self.states[k + 1] = s;
+            self.valid = k + 2;
+            left -= STEP;
+        }
+        return self.reaches(goal);
+    }
+
+    // ---- searching -----------------------------------------------------------------
+
+    /// next match of m after the cursor (forward) or before it, wrapping
+    /// around -> (line, byte), or none
+    export fn search(mut self: &Buf, m: &Matcher, forward: bool) -> (i64, i64)? {
+        let n: i64 = self.text.count;
+        let here: string = self.text.get(self.cy);
+
+        if (forward) {
+            if (let f = m.find(&here, next_char(&here, self.cx))) {
+                let (a, b) = f;
+
+                return (self.cy, a);
+            }
+
+            for (let k: i64 in 1..(n + 1)) {
+                let y: i64 = (self.cy + k) % n;
+                let t: string = self.text.get(y);
+
+                if (let f = m.find(&t, 0)) {
+                    let (a, b) = f;
+
+                    return (y, a);
+                }
+            }
+            return none;
+        }
+
+        for (let k: i64 in 0..(n + 1)) {
+            let y: i64 = ((self.cy - k) % n + n) % n;
+            let t: string = self.text.get(y);
+            let ms: i64[] = m.all(&t);
+            var best: i64 = -1;
+            var j: i64 = 0;
+
+            while (j < ms.len) {
+                if (k > 0 || ms[j] < self.cx) { best = ms[j]; }
+                j += 2;
+            }
+            if (best >= 0) {
+                return (y, best);
+            }
+        }
+        return none;
+    }
+
+    // ---- files ---------------------------------------------------------------------
+
+    /// write to its file (or to p, which becomes its file; force: even if
+    /// the file changed since it was read) -> bytes
+    export fn save(mut self: &Buf, p: string, force: bool) -> i64 | fs::NotFound |
+        fs::PermissionDenied | fs::IsADirectory | fs::IoError | ml::ChangedOnDisk {
+        var to: string = p;
+
+        if (to.len == 0) { to = self.path; }
+        if (to.len == 0) { fail fs::NotFound { path: "(no file name)" }; }
+        self.commit();
+        let n: i64 = self.text.write(to, true, force)?;
+
+        self.path = to;
+        self.modified = false;
+        self.scratch = false;
+        self.hist.saved = self.hist.at;
+        return n;
+    }
+
+    /// save the history for its file, as the file is now -> did it work?
+    export fn keep_history(self: &Buf) -> bool {
+        if (self.path.len == 0 || self.scratch) {
+            return false;
+        }
+        return undo::save(&self.hist, self.path, self.text.stamp, self.text.stamp_time / 1ns);
+    }
+
     /// load the history saved for its file, if the file is as it was then
     /// -> was it?
     export fn recall_history(mut self: &Buf) -> bool {
