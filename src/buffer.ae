@@ -228,6 +228,106 @@ impl Matcher {
         return self.find_plain(s, start);
     }
 
+    // literal find in s (already lowercased when folding)
+    fn find_plain(self: &Matcher, s: &string, start: i64) -> (i64, i64)? {
+        var needle: string = self.pattern;
+
+        if (self.fold) { needle = self.low; }
+        if (let i = str::find_from(*s, needle, start)) {
+            return (i, i + needle.len);
+        }
+        return none;
+    }
+
+    /// every match in s, as start, end pairs (at most 200)
+    export fn all(self: &Matcher, s: &string) -> i64[] {
+        var out: i64[] = [];
+
+        if (self.pattern.len == 0 || self.bad.len > 0) {
+            return out;
+        }
+        // (fold the whole line once, not per match)
+        var low: string = "";
+        let plain: bool = self.re.len == 0;
+
+        if (plain && self.fold) { low = str::to_lower(*s); }
+        var at: i64 = 0;
+
+        while (at <= s.len && out.len < 400) {
+            var found: (i64, i64)? = none;
+
+            if (!plain) {
+                found = self.find(s, at);
+            } else if (self.fold) {
+                found = self.find_plain(&low, at);
+            } else {
+                found = self.find_plain(s, at);
+            }
+            if (let m = found) {
+                let (a, b) = m;
+
+                out.push(a);
+                out.push(b);
+                if (b > at) { at = b; } else { at += 1; }
+            } else {
+                break;
+            }
+        }
+        return out;
+    }
+}
+
+impl Buf {
+    /// how many lines
+    export fn lines(self: &Buf) -> i64 { return self.text.count; }
+
+    /// line i
+    export fn line(mut self: &Buf, i: i64) -> string { return self.text.get(i); }
+
+    // ---- changes ---------------------------------------------------------------
+
+    /// start a change (edits until commit are undone together)
+    export fn begin(mut self: &Buf) -> void {
+        if (self.changing) {
+            return;
+        }
+        self.cur = Change { cy: self.cy, cx: self.cx };
+        self.changing = true;
+    }
+
+    /// end the change: a new state, child of the current one
+    export fn commit(mut self: &Buf) -> void {
+        if (!self.changing) {
+            return;
+        }
+        self.changing = false;
+        if (self.cur.ops.len == 0) {
+            return;
+        }
+        let parent: i64 = self.hist.at;
+
+        self.cur.parent = parent;
+        self.cur.ay = self.cy;
+        self.cur.ax = self.cx;
+        self.cur.time = time::since_epoch() / 1s;
+        self.hist.nodes.push(std::copy(self.cur));
+        self.cur = Change {};
+        let k: i64 = self.hist.nodes.len;
+
+        self.hist.set_next(parent, k);
+        self.hist.at = k;
+        self.modified = k != self.hist.saved;
+    }
+
+    // line i changed: its highlight state and later ones must be redone
+    fn touched(mut self: &Buf, i: i64) -> void {
+        self.modified = true;
+        self.gen += 1;
+        let k: i64 = i / STEP + 1;
+
+        if (k < self.valid) { self.valid = k; }
+    }
+
     // record op (in its own change if none is open)
     fn record(mut self: &Buf, op: Op) -> void {
         if (self.changing) {
