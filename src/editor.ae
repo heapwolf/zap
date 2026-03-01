@@ -2714,6 +2714,90 @@ impl App {
         self.after();
     }
 
+    // ---- searching ---------------------------------------------------------------------
+
+    fn set_matcher(mut self: &App, pat: string) -> void {
+        self.matcher = matcher(pat, self.cfg.regex, self.cfg.ignorecase, self.cfg.smartcase);
+        self.hl = true;
+        if (self.matcher.bad.len > 0) { self.fail_msg(self.matcher.bad); }
+    }
+
+    // next match of the last search (forward or back), in the tree if focused
+    fn search_next(mut self: &App, forward: bool) -> void {
+        if (self.matcher.pattern.len == 0) {
+            self.fail_msg("E35: No previous regular expression");
+            return;
+        }
+        self.hl = true;
+        let m: Matcher = std::copy(self.matcher);
+
+        if (self.sheet_on() && !self.focus_tree) {
+            self.sheet_search(&m, forward);
+            return;
+        }
+        if (self.focus_tree) {
+            let n: i64 = self.tree.rows.len;
+
+            for (let k: i64 in 1..(n + 1)) {
+                var i: i64 = (self.tree.cursor + k) % n;
+
+                if (!forward) { i = ((self.tree.cursor - k) % n + n) % n; }
+                let name: string = self.tree.rows[i].name;
+
+                if (m.find(&name, 0) != none) {
+                    self.tree.select(i, self.tree_h);
+                    return;
+                }
+            }
+            self.fail_msg("E486: Pattern not found: \(m.pattern)");
+            return;
+        }
+        let before: i64 = self.b.cy;
+
+        if (let at = self.b.search(&m, forward)) {
+            let (y, x) = at;
+
+            self.go(y, x, true);
+            if (forward && y < before) { self.say("search hit BOTTOM, continuing at TOP"); }
+            else if (!forward && y > before) { self.say("search hit TOP, continuing at BOTTOM"); }
+            else { self.say("\(self.cmd_prefix(forward))\(m.pattern)"); }
+        } else {
+            self.fail_msg("E486: Pattern not found: \(m.pattern)");
+        }
+    }
+
+    fn cmd_prefix(self: &App, forward: bool) -> string {
+        if (forward) {
+            return "/";
+        }
+        return "?";
+    }
+
+    // ---- the tree ------------------------------------------------------------------------
+
+    fn focus_on_tree(mut self: &App) -> void {
+        if (self.split.at <= 0) { self.split.at = self.cfg.tree_width; }
+        self.focus_tree = true;
+        self.reveal();
+    }
+
+    // `:focus next|prev|tree|editor`: tree and editor, in Tab order (focusing
+    // the tree shows it)
+    fn focus_cmd(mut self: &App, arg: string) -> void {
+        let order: string[] = ["tree", "editor"];
+        let n: i64 = order.len;
+        var at: i64 = 1;
+
+        if (self.focus_tree) { at = 0; }
+        var to: string = arg;
+
+        if (str::eq(arg, "next") || arg.len == 0) { to = order[(at + 1) % n]; }
+        else if (str::eq(arg, "prev")) { to = order[(at - 1 + n) % n]; }
+        if (str::eq(to, "tree")) { self.focus_on_tree(); }
+        else if (str::eq(to, "editor")) { self.focus_tree = false; }
+        else { self.fail_msg("E475: Invalid argument: \(arg) (next, prev, tree, editor)"); }
+    }
+
     // a tree key -> 0 needs more keys, 1 done, 2 not one
     fn tree_cmd(mut self: &App, toks: &string[]) -> i64 {
         let n: i64 = toks.len;
