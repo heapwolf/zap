@@ -3554,6 +3554,58 @@ impl App {
         }
     }
 
+    // :s/a/b/[g] on the line, :%s/a/b/[g] on every line
+    fn substitute(mut self: &App, line: string, ranged: bool, ry1: i64, ry2: i64) -> void {
+        var rest: string = line;
+
+        if (str::starts_with(rest, "substitute")) { rest = str::substr(rest, 10, rest.len - 10); }
+        else if (str::starts_with(rest, "s")) { rest = str::substr(rest, 1, rest.len - 1); }
+        if (rest.len < 2) {
+            self.fail_msg("E486: :s/pattern/replacement/[g]");
+            return;
+        }
+        let sep: string = str::substr(rest, 0, 1);
+        let parts: string[] = str::split(str::substr(rest, 1, rest.len - 1), sep);
+
+        if (parts.len < 2) {
+            self.fail_msg("E486: :s/pattern/replacement/[g]");
+            return;
+        }
+        var pat: string = parts[0];
+
+        if (pat.len == 0) { pat = self.last_search; }
+        let rep: string = parts[1];
+        var global: bool = false;
+
+        if (parts.len > 2) { global = str::contains(parts[2], "g"); }
+        let m: Matcher = matcher(pat, self.cfg.regex, self.cfg.ignorecase, self.cfg.smartcase);
+
+        if (m.bad.len > 0) {
+            self.fail_msg(m.bad);
+            return;
+        }
+        var y1: i64 = self.b.cy;
+        var y2: i64 = self.b.cy;
+
+        if (ranged) {
+            y1 = ry1;
+            y2 = ry2;
+        }
+        var changed: i64 = 0;
+        var count: i64 = 0;
+
+        self.b.begin();
+
+        for (let y: i64 in y1..(y2 + 1)) {
+            let l: string = self.b.text.get(y);
+            var out: str::Builder;
+            var at: i64 = 0;
+            var any: bool = false;
+
+            while (at <= l.len) {
+                if (let f = m.find(&l, at)) {
+                    let (s, e) = f;
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
