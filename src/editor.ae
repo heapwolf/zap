@@ -2516,6 +2516,93 @@ impl App {
         }
     }
 
+    // block's screen columns (right one exclusive)
+    fn block_cols(mut self: &App) -> (i64, i64) {
+        let ts: i64 = self.b.tabstop;
+        let la: string = self.b.text.get(self.vy);
+        let lb: string = self.b.text.get(self.b.cy);
+        let ca: i64 = col_of(&la, self.vx, ts);
+        let cb: i64 = col_of(&lb, self.b.cx, ts);
+        var wa: i64 = 1;
+
+        if (self.vx < la.len) { wa = cell_width(&la, self.vx, ca, ts); }
+        var wb: i64 = 1;
+
+        if (self.b.cx < lb.len) { wb = cell_width(&lb, self.b.cx, cb, ts); }
+        var c1: i64 = ca;
+
+        if (cb < c1) { c1 = cb; }
+        var c2: i64 = ca + wa;
+
+        if (cb + wb > c2) { c2 = cb + wb; }
+        return (c1, c2);
+    }
+
+    // bytes selected on each of its lines: line, from, to (exclusive)
+    fn sel_spans(mut self: &App) -> i64[] {
+        var out: i64[] = [];
+        let (ly1, ly2) = self.sel_lines();
+
+        if (self.vkind == 2) {
+            for (let y: i64 in ly1..(ly2 + 1)) {
+                out.push(y);
+                out.push(0);
+                out.push(self.b.text.get(y).len);
+            }
+            return out;
+        }
+        if (self.vkind == 3) {
+            let (c1, c2) = self.block_cols();
+            let ts: i64 = self.b.tabstop;
+
+            for (let y: i64 in ly1..(ly2 + 1)) {
+                let l: string = self.b.text.get(y);
+
+                out.push(y);
+                out.push(byte_at(&l, c1, ts));
+                out.push(byte_at(&l, c2, ts));
+            }
+            return out;
+        }
+        let (y1, x1, y2, x2) = self.sel_ends();
+
+        for (let y: i64 in y1..(y2 + 1)) {
+            let l: string = self.b.text.get(y);
+            var a: i64 = 0;
+
+            if (y == y1) { a = x1; }
+            var e: i64 = l.len;
+
+            if (y == y2) { e = x2; }
+            if (e < a) { e = a; }
+            out.push(y);
+            out.push(a);
+            out.push(e);
+        }
+        return out;
+    }
+
+    // selected text (a block's: its line parts, newline-separated)
+    fn sel_text(mut self: &App) -> string {
+        if (self.vkind == 1) {
+            let (y1, x1, y2, x2) = self.sel_ends();
+
+            return self.yank_text(y1, x1, y2, x2);
+        }
+        let spans: i64[] = self.sel_spans();
+        var b: str::Builder;
+        var k: i64 = 0;
+
+        while (k < spans.len) {
+            let l: string = self.b.text.get(spans[k]);
+
+            b.add(str::substr(l, spans[k + 1], spans[k + 2] - spans[k + 1]));
+            if (self.vkind == 2 || k + 3 < spans.len) { b.add_byte(10); }
+            k += 3;
+        }
+        return b.to_string();
+    }
+
     fn insert_edit(mut self: &App, t: &string, k: &tui::Key) -> void {
         self.b.begin();
         match (*t) {
