@@ -2603,6 +2603,125 @@ impl App {
         return b.to_string();
     }
 
+    // a visual-mode command: toks so far -> 0 needs more keys, 1 done, 2 not one
+    fn visual_cmd(mut self: &App, toks: &string[]) -> i64 {
+        let n: i64 = toks.len;
+        let (count, i) = read_count(toks, 0);
+
+        if (i >= n) {
+            return 0;
+        }
+        let t: string = toks[i];
+        var c1: i64 = count;
+
+        if (c1 < 1) { c1 = 1; }
+        let rest: i64 = n - i - 1;
+
+        match (t) {
+            "<Esc>" | "<C-c>" | "<C-[>" => { self.end_visual(); },
+            "v" | "V" | "<C-v>" => {
+                var k: i64 = 1;
+
+                if (str::eq(t, "V")) { k = 2; }
+                if (str::eq(t, "<C-v>")) { k = 3; }
+                if (k == self.vkind) { self.end_visual(); } else { self.vkind = k; }
+            },
+            "o" | "O" => {
+                let y: i64 = self.vy;
+                let x: i64 = self.vx;
+
+                self.vy = self.b.cy;
+                self.vx = self.b.cx;
+                self.go(y, x, true);
+            },
+            "d" | "x" | "<Del>" | "<BS>" => { self.visual_op("d", 1); },
+            "X" | "D" => {
+                if (self.vkind == 1) { self.vkind = 2; }
+                self.visual_op("d", 1);
+            },
+            "y" => { self.visual_op("y", 1); },
+            "Y" => {
+                if (self.vkind == 1) { self.vkind = 2; }
+                self.visual_op("y", 1);
+            },
+            "c" | "s" => { self.visual_op("c", 1); },
+            "C" | "S" | "R" => {
+                if (self.vkind != 2) { self.vkind = 2; }
+                self.visual_op("c", 1);
+            },
+            ">" => { self.visual_op(">", c1); },
+            "<lt>" => { self.visual_op("<", c1); },
+            "~" | "u" | "U" | "J" | "p" | "P" => { self.visual_op(t, c1); },
+            "r" => {
+                if (rest < 1) {
+                    return 0;
+                }
+                var ch: string = toks[i + 1];
+
+                if (str::eq(ch, "<Space>")) { ch = " "; }
+                if (str::eq(ch, "<lt>")) { ch = "<"; }
+                if (str::eq(ch, "<Esc>")) {
+                    self.end_visual();
+                    return 1;
+                }
+                if (str::starts_with(ch, "<") && ch.len > 1) {
+                    return 2;
+                }
+                self.visual_op("r\(ch)", 1);
+            },
+            "I" | "A" => { self.visual_insert(str::eq(t, "A")); },
+            ":" => {
+                self.end_visual();
+                self.start_cmd(":");
+                self.cmd.set("'<,'>");
+            },
+            "*" | "#" => {
+                let w: string = self.sel_text();
+
+                self.end_visual();
+                if (w.len == 0 || str::contains(w, "\n")) {
+                    return 1;
+                }
+                self.last_search = w;
+                self.search_fwd = str::eq(t, "*");
+                // (literal text, not a pattern)
+                self.matcher = matcher(w, false, false, false);
+                self.hl = true;
+                self.search_next(self.search_fwd);
+            },
+            "i" | "a" => {
+                if (rest < 1) {
+                    return 0;
+                }
+                let o: string = toks[i + 1];
+
+                if (!str::eq(o, "w") && !str::eq(o, "W")) {
+                    return 2;
+                }
+                let (a, e) = self.word_at(self.b.cy, self.b.cx, str::eq(o, "W"), str::eq(t, "a"));
+
+                if (self.vkind == 2) { self.vkind = 1; }
+                self.vy = self.b.cy;
+                self.vx = a;
+                let l: string = self.b.text.get(self.b.cy);
+
+                self.go(self.b.cy, prev_char(&l, e), true);
+            },
+            _ => {
+                let m: Motion = self.motion(toks, i, count);
+
+                if (m.state == 0) {
+                    return 0;
+                }
+                if (m.state == 2) {
+                    return 2;
+                }
+                self.move_to(&m);
+            }
+        }
+        return 1;
+    }
+
     fn insert_edit(mut self: &App, t: &string, k: &tui::Key) -> void {
         self.b.begin();
         match (*t) {
