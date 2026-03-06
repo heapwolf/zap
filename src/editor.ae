@@ -2817,6 +2817,103 @@ impl App {
                     var chars: i64 = 0;
                     var j: i64 = 0;
 
+                    while (j < part.len) {
+                        j = next_char(&part, j);
+                        chars += 1;
+                    }
+                    out = str::repeat(str::substr(op, 1, op.len - 1), chars);
+                }
+                self.b.set_line(y, "\(str::substr(l, 0, a))\(out)\(str::substr(l, e, l.len - e))");
+            }
+            self.b.commit();
+            if (kind == 1) { self.go(y1, x1, true); } else { self.go_block_start(ly1, c1, kind); }
+            return;
+        }
+        if (str::eq(op, "p") || str::eq(op, "P")) {
+            let put: string = self.reg;
+            let put_lines: bool = self.reg_lines;
+
+            if (put.len == 0) {
+                return;
+            }
+            self.b.begin();
+            if (kind == 2) {
+                var lines: string[] = str::split(put, "\n");
+
+                if (put_lines && lines.len > 1 && lines[lines.len - 1].len == 0) { lines.pop(); }
+
+                // insert new lines first: removing the old never empties the buffer
+                for (let k: i64, let l: string in &lines) { self.b.insert_line(ly2 + 1 + k, l); }
+
+                for (let k: i64 in ly1..(ly2 + 1)) { self.b.remove_line(ly1); }
+                self.reg = text;
+                self.reg_lines = true;
+                self.b.commit();
+                self.go_first(ly1);
+                return;
+            }
+            var at_y: i64 = y1;
+            var at_x: i64 = x1;
+
+            if (kind == 1) {
+                self.b.cut(y1, x1, y2, x2);
+            } else {
+                var k: i64 = spans.len - 3;
+
+                while (k >= 0) {
+                    self.b.cut(spans[k], spans[k + 1], spans[k], spans[k + 2]);
+                    k -= 3;
+                }
+                at_y = ly1;
+                at_x = spans[1];
+            }
+            var t: string = put;
+
+            if (put_lines) {
+                if (str::ends_with(t, "\n")) { t = str::substr(t, 0, t.len - 1); }
+                t = "\n\(t)\n";
+            }
+            let end: (i64, i64) = self.b.put(at_y, at_x, t);
+
+            self.b.commit();
+            self.reg = text;
+            self.reg_lines = kind == 2;
+            let el: string = self.b.text.get(end.0);
+
+            self.go(end.0, prev_char(&el, end.1), true);
+            return;
+        }
+        // d, c
+        if (kind == 2) {
+            self.op_lines(op, ly1, ly2);
+            return;
+        }
+        self.b.begin();
+        self.reg = text;
+        self.reg_lines = false;
+        if (kind == 1) {
+            self.b.cut(y1, x1, y2, x2);
+            self.b.cy = y1;
+            self.b.cx = x1;
+        } else {
+            var k: i64 = spans.len - 3;
+
+            while (k >= 0) {
+                self.b.cut(spans[k], spans[k + 1], spans[k], spans[k + 2]);
+                k -= 3;
+            }
+            self.b.cy = ly1;
+            self.b.cx = spans[1];
+        }
+        if (str::eq(op, "c")) {
+            if (kind == 3) { self.blk = [ly1, ly2, c1, spans[1], 0]; }
+            self.mode = Mode::Insert;
+            return;
+        }
+        self.b.commit();
+        if (kind == 1) { self.go(y1, x1, true); } else { self.go_block_start(ly1, c1, kind); }
+    }
+
     fn insert_edit(mut self: &App, t: &string, k: &tui::Key) -> void {
         self.b.begin();
         match (*t) {
