@@ -2722,6 +2722,101 @@ impl App {
         return 1;
     }
 
+    // word at (y, x) (big: up to spaces; around: plus trailing spaces) -> its
+    // first byte and the byte after it
+    fn word_at(mut self: &App, y: i64, x: i64, big: bool, around: bool) -> (i64, i64) {
+        let l: string = self.b.text.get(y);
+
+        if (x >= l.len) {
+            return (x, x);
+        }
+        let c0: i64 = class(l[x], big);
+        var a: i64 = x;
+
+        while (a > 0 && class(l[prev_char(&l, a)], big) == c0) { a = prev_char(&l, a); }
+        var e: i64 = next_char(&l, x);
+
+        while (e < l.len && class(l[e], big) == c0) { e = next_char(&l, e); }
+        if (around) {
+            while (e < l.len && class(l[e], big) == 0) { e += 1; }
+        }
+        return (a, e);
+    }
+
+    // applies operator op to the selection (d c y > < ~ u U J p P, r and a character)
+    fn visual_op(mut self: &App, op: string, count: i64) -> void {
+        let kind: i64 = self.vkind;
+        let (ly1, ly2) = self.sel_lines();
+        let (y1, x1, y2, x2) = self.sel_ends();
+        let spans: i64[] = self.sel_spans();
+        var c1: i64 = 0;
+
+        if (kind == 3) {
+            let (bc1, bc2) = self.block_cols();
+
+            c1 = bc1;
+        }
+        let text: string = self.sel_text();
+
+        self.end_visual();
+        if (str::eq(op, ">") || str::eq(op, "<")) {
+            for (let k: i64 in 0..count) { self.op_lines(op, ly1, ly2); }
+            return;
+        }
+        if (str::eq(op, "J")) {
+            var times: i64 = ly2 - ly1;
+
+            if (times < 1) { times = 1; }
+            self.join_lines(ly1, times);
+            return;
+        }
+        if (str::eq(op, "y")) {
+            if (kind == 2) {
+                self.op_lines("y", ly1, ly2);
+            } else {
+                self.reg = text;
+                self.reg_lines = false;
+                self.clip(text);
+            }
+            if (kind == 1) { self.go(y1, x1, true); } else { self.go_block_start(ly1, c1, kind); }
+            return;
+        }
+        if (str::eq(op, "~") || str::eq(op, "u") || str::eq(op, "U") || str::starts_with(op, "r")) {
+            self.b.begin();
+            var k: i64 = 0;
+
+            while (k < spans.len) {
+                let y: i64 = spans[k];
+                let a: i64 = spans[k + 1];
+                let e: i64 = spans[k + 2];
+
+                k += 3;
+                let l: string = self.b.text.get(y);
+                let part: string = str::substr(l, a, e - a);
+                var out: string = part;
+
+                if (str::eq(op, "u")) {
+                    out = str::to_lower(part);
+                } else if (str::eq(op, "U")) {
+                    out = str::to_upper(part);
+                } else if (str::eq(op, "~")) {
+                    var b: str::Builder;
+                    var j: i64 = 0;
+
+                    while (j < part.len) {
+                        let nj: i64 = next_char(&part, j);
+                        let ch: string = str::substr(part, j, nj - j);
+                        let up: string = str::to_upper(ch);
+
+                        if (str::eq(up, ch)) { b.add(str::to_lower(ch)); } else { b.add(up); }
+                        j = nj;
+                    }
+                    out = b.to_string();
+                } else {
+                    // r: every character in it
+                    var chars: i64 = 0;
+                    var j: i64 = 0;
+
     fn insert_edit(mut self: &App, t: &string, k: &tui::Key) -> void {
         self.b.begin();
         match (*t) {
