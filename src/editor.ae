@@ -2914,6 +2914,123 @@ impl App {
         if (kind == 1) { self.go(y1, x1, true); } else { self.go_block_start(ly1, c1, kind); }
     }
 
+    // moves the cursor to a block's top left (or a line's start)
+    fn go_block_start(mut self: &App, y: i64, col: i64, kind: i64) -> void {
+        let l: string = self.b.text.get(y);
+
+        if (kind == 2) {
+            self.go(y, first_non_blank(&l), true);
+            return;
+        }
+        self.go(y, byte_at(&l, col, self.b.tabstop), true);
+    }
+
+    // I, A on the selection: on every line of a block (Esc copies the typed
+    // text to the others), else at its start or end
+    fn visual_insert(mut self: &App, after: bool) -> void {
+        let kind: i64 = self.vkind;
+        let (ly1, ly2) = self.sel_lines();
+        let (y1, x1, y2, x2) = self.sel_ends();
+
+        if (kind == 3) {
+            let (c1, c2) = self.block_cols();
+
+            self.end_visual();
+            var col: i64 = c1;
+
+            if (after) { col = c2; }
+            let ts: i64 = self.b.tabstop;
+
+            self.b.begin();
+            var l: string = self.b.text.get(ly1);
+            let w: i64 = col_of(&l, l.len, ts);
+
+            if (w < col) {
+                l = "\(l)\(str::repeat(" ", col - w))";
+                self.b.set_line(ly1, l);
+            }
+            let x: i64 = byte_at(&l, col, ts);
+            var pad: i64 = 0;
+
+            if (after) { pad = 1; }
+            self.blk = [ly1, ly2, col, x, pad];
+            self.b.cy = ly1;
+            self.b.cx = x;
+            self.mode = Mode::Insert;
+            return;
+        }
+        self.end_visual();
+        if (after) {
+            if (kind == 2) {
+                self.b.cy = ly2;
+                self.b.cx = self.b.text.get(ly2).len;
+            } else {
+                self.b.cy = y2;
+                self.b.cx = x2;
+                if (y2 > y1 && x2 == 0) {
+                    self.b.cy = y2 - 1;
+                    self.b.cx = self.b.text.get(y2 - 1).len;
+                }
+            }
+        } else if (kind == 2) {
+            let l: string = self.b.text.get(ly1);
+
+            self.b.cy = ly1;
+            self.b.cx = first_non_blank(&l);
+        } else {
+            self.b.cy = y1;
+            self.b.cx = x1;
+        }
+        self.start_insert();
+    }
+
+    // block insert done: copies what was typed on its first line to the others
+    fn block_fill(mut self: &App) -> void {
+        let y1: i64 = self.blk[0];
+        let y2: i64 = self.blk[1];
+        let col: i64 = self.blk[2];
+        let x0: i64 = self.blk[3];
+        let pad: bool = self.blk[4] == 1;
+
+        self.blk = [];
+        if (self.b.cy != y1 || self.b.cx <= x0) {
+            return;
+        }
+        let first: string = self.b.text.get(y1);
+        let typed: string = str::substr(first, x0, self.b.cx - x0);
+        let ts: i64 = self.b.tabstop;
+
+        for (let y: i64 in (y1 + 1)..(y2 + 1)) {
+            var l: string = self.b.text.get(y);
+            let w: i64 = col_of(&l, l.len, ts);
+
+            if (w < col) {
+                if (!pad) { continue; }
+                l = "\(l)\(str::repeat(" ", col - w))";
+            }
+            let x: i64 = byte_at(&l, col, ts);
+
+            self.b.set_line(y, "\(str::substr(l, 0, x))\(typed)\(str::substr(l, x, l.len - x))");
+        }
+    }
+
+    // ---- the mouse in the text -----------------------------------------------------
+
+    // text under (x, y) of the editor window: line, byte
+    fn text_at(mut self: &App, x: i64, y: i64) -> (i64, i64) {
+        var line: i64 = self.b.top + y;
+
+        // (at the top edge, a drag goes up past it)
+        if (y <= 0 && self.dragging && self.b.top > 0) { line = self.b.top - 1; }
+        if (line >= self.b.text.count) { line = self.b.text.count - 1; }
+        if (line < 0) { line = 0; }
+        let l: string = self.b.text.get(line);
+        var col: i64 = x - self.gutter + self.b.left;
+
+        if (col < 0) { col = 0; }
+        return (line, byte_at(&l, col, self.b.tabstop));
+    }
+
     fn insert_edit(mut self: &App, t: &string, k: &tui::Key) -> void {
         self.b.begin();
         match (*t) {
