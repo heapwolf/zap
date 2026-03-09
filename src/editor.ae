@@ -3342,6 +3342,116 @@ impl App {
         self.after();
     }
 
+    // Tab on the command line: completes a command or file name
+    fn complete(mut self: &App, forward: bool) -> void {
+        let n: i64 = self.wild.len;
+
+        if (n > 0 && str::eq(self.cmd.text, self.wild_text)) {
+            // menu is up: next (or previous)
+            if (forward) { self.wild_at = (self.wild_at + 1) % n; }
+            else { self.wild_at = (self.wild_at + n - 1) % n; }
+            self.wild_text = "\(self.wild_head)\(self.wild[self.wild_at])";
+            self.cmd.set(self.wild_text);
+            return;
+        }
+        self.wild = [];
+        let text: string = self.cmd.text;
+        let sp: i64 = str::find(text, " ") ?? -1;
+        var options: string[] = [];
+        var prefix: string = text;
+        var head: string = "";
+
+        if (sp < 0) {
+            for (let nm: string in &EX_NAMES) { options.push(nm); }
+
+            for (let c: &self::&Command in &self.cfg.commands) {
+                if (!self.cfg.disabled_addin(c.addin)) { options.push(c.name); }
+            }
+        } else {
+            head = str::substr(text, 0, sp + 1);
+            prefix = str::substr(text, sp + 1, text.len - sp - 1);
+            let cmd: string = str::substr(text, 0, sp);
+
+            if (str::eq(cmd, "set") || str::eq(cmd, "se")) {
+                for (let o: string in &OPTIONS) { options.push(o); }
+            } else if (str::eq(cmd, "theme") || str::eq(cmd, "colorscheme")) {
+                options = self.theme_names();
+            } else {
+                var dir: string = path::dir(prefix);
+                var base: string = path::base(prefix);
+
+                if (str::ends_with(prefix, "/")) {
+                    dir = str::substr(prefix, 0, prefix.len - 1);
+                    base = "";
+                }
+                if (!str::contains(prefix, "/")) {
+                    dir = ".";
+                    base = prefix;
+                }
+                var full: string = dir;
+
+                if (!path::is_absolute(full)) { full = path::join(self.cwd, dir); }
+                let names: string[] = match (fs::list(full)) {
+                    nm => nm,
+                    e: fs::NotFound => [], e2: fs::PermissionDenied => [],
+                    e3: fs::NotADirectory => [],
+                    e4: fs::IoError => []
+                };
+
+                for (let nm: string in &names) {
+                    if (str::starts_with(nm, base)) {
+                        var p: string = nm;
+
+                        if (!str::eq(dir, ".") || str::contains(prefix, "/")) {
+                            p = path::join(dir, nm);
+                        }
+                        if (str::ends_with(prefix, "/")) { p = "\(prefix)\(nm)"; }
+                        match (fs::info(path::join(full, nm))) {
+                            inf => { if (inf.kind == fs::Kind::Dir) { p = "\(p)/"; } },
+                            e: fs::NotFound => {}, e2: fs::PermissionDenied => {},
+                            e3: fs::IoError => {}
+                        }
+                        options.push(p);
+                    }
+                }
+            }
+        }
+        var hits: string[] = [];
+
+        for (let o: string in &options) {
+            if (str::starts_with(o, prefix)) {
+                hits.push(o);
+            }
+        }
+        if (hits.len == 0) {
+            return;
+        }
+        // longest common prefix
+        var common: string = hits[0];
+
+        for (let h: string in &hits) {
+            var k: i64 = 0;
+
+            while (k < common.len && k < h.len && common[k] == h[k]) { k += 1; }
+            common = str::substr(common, 0, k);
+        }
+        if (hits.len > 1) {
+            // a menu over the command line: the first one in it, Tab the next
+            sort_strings(mut &hits);
+            self.wild = hits;
+            self.wild_head = head;
+            self.wild_at = 0;
+            if (!forward) { self.wild_at = self.wild.len - 1; }
+            self.wild_text = "\(head)\(self.wild[self.wild_at])";
+            self.cmd.set(self.wild_text);
+            return;
+        }
+        var end: string = "";
+
+        if (hits.len == 1 && sp < 0) { end = " "; }
+        self.cmd.set("\(head)\(common)\(end)");
+    }
+
     // ---- searching ---------------------------------------------------------------------
 
     fn set_matcher(mut self: &App, pat: string) -> void {
