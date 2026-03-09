@@ -2516,6 +2516,119 @@ impl App {
         }
     }
 
+    // waits for clipboard programs that have ended
+    fn reap_copiers(mut self: &App) -> void {
+        var left: process::Child[] = [];
+
+        while (self.copiers.len > 0) {
+            var c: process::Child = self.copiers.pop();
+            var ended: bool = true;
+
+            match (c.try_wait()) {
+                r => { if (r == none) { ended = false; } },
+                e: process::ProcError => {}
+            }
+            if (ended) { c.close(); } else { left.push(c); }
+        }
+        self.copiers = left;
+    }
+
+    // ---- the command line's history, on disk --------------------------------------------
+
+    /// reads back the command-line and search histories (from the last run)
+    export fn recall_cmd_history(mut self: &App) -> void {
+        self.persist = true;
+        let t: string = fs::read_file(history_path()) ?? "";
+
+        for (let l: string in str::split(t, "\n")) {
+            if (l.len < 2) { continue; }
+            let entry: string = str::substr(l, 1, l.len - 1);
+
+            if (l[0] == ':') { self.hist_cmd.push(entry); }
+            if (l[0] == '/') { self.hist_search.push(entry); }
+        }
+    }
+
+    // writes the histories (the last HISTORY_MAX of each)
+    fn keep_cmd_history(mut self: &App) -> void {
+        if (!self.persist) {
+            return;
+        }
+        var b: str::Builder;
+        var first: i64 = self.hist_cmd.len - HISTORY_MAX;
+
+        for (let k: i64, let e: string in &self.hist_cmd) {
+            if (k >= first && !str::contains(e, "\n")) { b.add(":\(e)\n"); }
+        }
+        first = self.hist_search.len - HISTORY_MAX;
+
+        for (let k: i64, let e: string in &self.hist_search) {
+            if (k >= first && !str::contains(e, "\n")) { b.add("/\(e)\n"); }
+        }
+        let p: string = history_path();
+
+        state::ensure_dir(path::dir(p));
+        fs::write_file(p, b.to_string());
+    }
+
+    // ---- visual mode -----------------------------------------------------------------
+
+    /// starts a selection at the cursor: kind 1 characters (v), 2 lines (V),
+    /// 3 block (Ctrl+v)
+    export fn start_visual(mut self: &App, kind: i64) -> void {
+        if (self.mode == Mode::Insert) {
+            self.blk = [];
+            self.b.commit();
+        }
+        self.vkind = kind;
+        self.vy = self.b.cy;
+        self.vx = self.b.cx;
+        self.mode = Mode::Visual;
+        self.focus_tree = false;
+    }
+
+    /// ends the selection (gv restores it)
+    export fn end_visual(mut self: &App) -> void {
+        if (self.mode != Mode::Visual) {
+            return;
+        }
+        self.gv = [self.vkind, self.vy, self.vx, self.b.cy, self.b.cx];
+        self.mode = Mode::Normal;
+    }
+
+    // selection's first and last lines
+    fn sel_lines(self: &App) -> (i64, i64) {
+        if (self.vy <= self.b.cy) {
+            return (self.vy, self.b.cy);
+        }
+        return (self.b.cy, self.vy);
+    }
+
+    // selected characters: (y1, x1) to (y2, x2), end exclusive (the last
+    // line's end: its newline)
+    fn sel_ends(mut self: &App) -> (i64, i64, i64, i64) {
+        var y1: i64 = self.vy;
+        var x1: i64 = self.vx;
+        var y2: i64 = self.b.cy;
+        var x2: i64 = self.b.cx;
+
+        if (y2 < y1 || (y2 == y1 && x2 < x1)) {
+            y1 = self.b.cy;
+            x1 = self.b.cx;
+            y2 = self.vy;
+            x2 = self.vx;
+        }
+        let l: string = self.b.text.get(y2);
+
+        if (x2 >= l.len) {
+            if (y2 + 1 < self.b.text.count) {
+                return (y1, x1, y2 + 1, 0);
+            }
+            return (y1, x1, y2, l.len);
+        }
+        return (y1, x1, y2, next_char(&l, x2));
+    }
+
     // block's screen columns (right one exclusive)
     fn block_cols(mut self: &App) -> (i64, i64) {
         let ts: i64 = self.b.tabstop;
