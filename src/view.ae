@@ -465,6 +465,58 @@ export struct WildMenu(A) {
 impl WildMenu(A) as Node(A) {
     export fn measure(self: &WildMenu(A), avail: i64) -> Size { return Size { w: 0, h: 0 }; }
 
+    export fn sizing(self: &WildMenu(A)) -> Sizing {
+        return Sizing { w: tui::fill(1), h: tui::fill(1) };
+    }
+
+    export fn render(self: &WildMenu(A), mut f: &Frame(A), area: Rect) -> void {
+        let n: i64 = self.items.len;
+        var h: i64 = n;
+
+        if (h > 12) { h = 12; }
+        if (h > area.h - 2) { h = area.h - 2; }
+        if (h < 1) {
+            return;
+        }
+        var w: i64 = 0;
+
+        for (let it: &self::&string in &self.items) {
+            let iw: i64 = tui::width(*it);
+
+            if (iw > w) { w = iw; }
+        }
+        w += 2;
+        if (w > area.w) { w = area.w; }
+        var x: i64 = area.x + self.x - 1;
+
+        if (x + w > area.x + area.w) { x = area.x + area.w - w; }
+        if (x < area.x) { x = area.x; }
+        // (its last row just above the command line)
+        let y0: i64 = area.y + area.h - 1 - h;
+        var first: i64 = 0;
+
+        if (self.at >= h) { first = self.at - h + 1; }
+
+        for (let k: i64 in 0..h) {
+            let i: i64 = first + k;
+            var st: &tui::Style = &self.look.menu;
+
+            if (i == self.at) { st = &self.look.menu_selected; }
+            f.fill(Rect { x: x, y: y0 + k, w: w, h: 1 }, st);
+            f.text(x + 1, y0 + k, self.items[i], st, w - 2);
+        }
+    }
+}
+
+/// a menu completion: its icon (and the syntax group it is colored by), its
+/// word, and what it is ("pub fn", "field Item")
+export struct MenuRow {
+    export icon: string;
+    export group: i64;              // -1: menu.kind's color
+    export word: string;
+    export label: string;
+}
+
 // ---- the whole screen ----------------------------------------------------------------
 
 /// app's frame: paints what prepare read
