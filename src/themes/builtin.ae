@@ -1,0 +1,13 @@
+//! the built-in themes besides the base ones (base.ae, in the defaults):
+//! each file's text and its name in errors, read in this order after the
+//! defaults (config.ae's Config.read_builtin_themes).
+
+import more from "more.ae";
+import zenbones from "zenbones.ae";
+import atelier from "atelier.ae";
+
+/// each file's themes, as configuration text
+export let TEXTS: string[] = [more::MORE, zenbones::ZENBONES, atelier::ATELIER];
+
+/// each text's origin, as errors show it
+export let ORIGINS: string[] = ["<themes>", "<zenbones>", "<atelier>"];
