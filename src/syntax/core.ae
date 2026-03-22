@@ -220,3 +220,109 @@ export struct CLike {
 export let IN_TEMPLATE: i64 = 100;
 export let IN_TRIPLE: i64 = 101;
 export let IN_RAW: i64 = 102;
+
+// end of a raw string from i (inside it) at its )delimiter" (this delimiter,
+// or any one on lines after the opening) -> (end, closed?)
+fn raw_end(text: &string, i: i64, n: i64, delim: string, any: bool) -> (i64, bool) {
+    var j: i64 = i;
+
+    while (j < n) {
+        if (text[j] == ')') {
+            if (!any) {
+                let close: string = ")\(delim)\"";
+
+                if (j + close.len <= n && str::eq(str::substr(*text, j, close.len), close)) {
+                    return (j + close.len, true);
+                }
+            } else {
+                var k: i64 = j + 1;
+
+                while (k < n && k - j <= 17 && text[k] != '"' && text[k] != ' ' && text[k] != '(' &&
+                    text[k] != ')' && text[k] != '\\') {
+                    k += 1;
+                }
+                if (k < n && text[k] == '"') {
+                    return (k + 1, true);
+                }
+            }
+        }
+        j += 1;
+    }
+    return (n, false);
+}
+
+// end of a block comment from i at depth -> (end, remaining depth; 0: closed)
+fn comment_end(text: &string, i: i64, n: i64, depth: i64, nested: bool) -> (i64, i64) {
+    var j: i64 = i;
+    var d: i64 = depth;
+
+    while (j < n) {
+        if (j + 1 < n && text[j] == '*' && text[j + 1] == '/') {
+            d -= 1;
+            j += 2;
+            if (d == 0) {
+                return (j, 0);
+            }
+            continue;
+        }
+        if (nested && j + 1 < n && text[j] == '/' && text[j + 1] == '*') {
+            d += 1;
+            j += 2;
+            continue;
+        }
+        j += 1;
+    }
+    return (n, d);
+}
+
+// end of a template string from i (inside it) -> (end, closed?)
+fn template_end(text: &string, i: i64, n: i64) -> (i64, bool) {
+    var j: i64 = i;
+
+    while (j < n) {
+        if (text[j] == '\\') {
+            j += 2;
+            continue;
+        }
+        if (text[j] == '`') {
+            return (j + 1, true);
+        }
+        j += 1;
+    }
+    return (n, false);
+}
+
+// end of a triple-quoted string from i (inside it) -> (end, closed?)
+fn triple_end(text: &string, i: i64, n: i64) -> (i64, bool) {
+    if (let k = str::find_from(*text, "\"\"\"", i)) {
+        if (k + 3 <= n) {
+            return (k + 3, true);
+        }
+    }
+    return (n, false);
+}
+
+// can a / at i start a regex (i.e. what precedes it is not a value)?
+fn pattern_here(text: &string, lo: i64, i: i64) -> bool {
+    var k: i64 = i - 1;
+
+    while (k >= lo && is_space(text[k])) { k -= 1; }
+    if (k < lo) {
+        return true;
+    }
+    let p: u8 = text[k];
+
+    if (p == '(' || p == ',' || p == '=' || p == ':' || p == '[' || p == '!' || p == '&' ||
+        p == '|' || p == '?' || p == '{' || p == '}' || p == ';' || p == '+' || p == '-' ||
+        p == '*' || p == '%' || p == '<' || p == '>' || p == '~' || p == '^') {
+        return true;
+    }
+    // (a value follows return, typeof, ...)
+    var a: i64 = k;
+
+    while (a > lo && is_ident(text[a - 1])) { a -= 1; }
+    let w: string = str::substr(*text, a, k + 1 - a);
+
+    return str::eq(w, "return") || str::eq(w, "typeof") || str::eq(w, "case") || str::eq(w, "in") ||
+        str::eq(w, "of") || str::eq(w, "delete") || str::eq(w, "void") || str::eq(w, "yield");
+}
