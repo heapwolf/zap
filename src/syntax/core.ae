@@ -1,0 +1,222 @@
+//! Shared lexer code: the groups themes color, highlight spans, scanning
+//! helpers, and the lexer for C-like languages (C, C++, JavaScript, Swift),
+//! configured by a CLike.
+//!
+//! A lexer scans bytes lo..hi of a line from a start state (0: nothing
+//! open), appends spans to out (in order, non-overlapping), and returns the
+//! next line's start state. lo and hi let HTML pass <script> and <style>
+//! contents to the JavaScript and CSS lexers.
+
+import str from "std/string";
+
+/// a text span's kind, for theming
+export enum Group {
+    Normal, Comment, String, Keyword, Type, Number, Function, Constant, Operator, Punct,
+    Heading, Bold, Italic, Code, Link, Url, ListMark, Quote, Escape, Error,
+}
+
+/// group names as written in themes
+export let GROUP_NAMES: string[] = [
+    "normal", "comment", "string", "keyword", "type", "number", "function", "constant",
+    "operator", "punct", "heading", "bold", "italic", "code", "link", "url", "list", "quote",
+    "escape", "error"
+];
+
+/// a span: bytes lo..hi of a line are in group g
+export struct Hl {
+    export lo: i64;
+    export hi: i64;
+    export g: Group;
+}
+
+/// max highlighted bytes per line (the rest is plain)
+export let MAX_COL: i64 = 2000;
+
+export fn add(mut out: &Hl[], lo: i64, hi: i64, g: Group) -> void {
+    if (hi > lo) { out.push(Hl { lo: lo, hi: hi, g: g }); }
+}
+
+export fn is_ident_start(c: u8) -> bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c >= 128;
+}
+
+export fn is_ident(c: u8) -> bool { return is_ident_start(c) || (c >= '0' && c <= '9'); }
+
+export fn is_digit(c: u8) -> bool { return c >= '0' && c <= '9'; }
+
+export fn is_space(c: u8) -> bool { return c == ' ' || c == '\t' || c == '\r'; }
+
+/// where highlighting of text from lo stops (at most hi)
+export fn limit_to(text: &string, lo: i64, hi: i64) -> i64 {
+    var n: i64 = hi;
+
+    if (n > text.len) { n = text.len; }
+    if (n - lo > MAX_COL) { n = lo + MAX_COL; }
+    return n;
+}
+
+/// end of the string literal at i (quote q), skipping escapes (n if
+/// unclosed on this line)
+export fn string_end(text: &string, i: i64, n: i64, q: u8) -> i64 {
+    var j: i64 = i + 1;
+
+    while (j < n) {
+        let c: u8 = text[j];
+
+        if (c == '\\') {
+            j += 2;
+            continue;
+        }
+        j += 1;
+        if (c == q) {
+            return j;
+        }
+    }
+    return n;
+}
+
+/// end of the number at i (digits, letters for 0x and suffixes, _, a decimal point)
+export fn number_end(text: &string, i: i64, n: i64) -> i64 {
+    var j: i64 = i;
+
+    while (j < n && (is_ident(text[j]) || text[j] == '.')) {
+        if (text[j] == '.' && (j + 1 >= n || !is_digit(text[j + 1]))) { break; }
+        // (exponent sign: 1e-9)
+        if ((text[j] == 'e' || text[j] == 'E') && j + 1 < n &&
+            (text[j + 1] == '-' || text[j + 1] == '+') &&
+            !(j > i && (text[i + 1] == 'x' || text[i + 1] == 'X'))) {
+            j += 1;
+        }
+        j += 1;
+    }
+    return j;
+}
+
+/// a language's words, looked up directly from line bytes (no string per
+/// lookup): a hash table over several lists; each word's kind is the index
+/// of the first list containing it (keywords, types, constants, ...)
+export struct Words {
+    list: string[] = [];
+    kinds: i64[] = [];
+    slots: i64[] = [];      // index into list + 1; 0: empty
+    mask: i64 = 0;
+}
+
+// hash of bytes i..j of text (kept small to avoid overflow)
+fn hash_at(text: &string, i: i64, j: i64) -> i64 {
+    var h: i64 = 5381;
+
+    for (let k: i64 in i..j) { h = ((h * 33) + (text[k] as i64)) & 16777215; }
+    return h;
+}
+
+/// build Words from lists; a word's kind is the first list containing it
+export fn words(lists: &string[][]) -> Words {
+    var w: Words = Words {};
+    var count: i64 = 0;
+
+    for (let l: &lists::&string[] in lists) { count += l.len; }
+    var size: i64 = 16;
+
+    while (size < count * 2) { size *= 2; }
+
+    for (let k: i64 in 0..size) { w.slots.push(0); }
+    w.mask = size - 1;
+
+    for (let kind: i64, let l: &lists::&string[] in lists) {
+        for (let word: &l::&string in l) {
+            if (w.kind_at(word, 0, word.len) >= 0) { continue; }
+            var at: i64 = hash_at(word, 0, word.len) & w.mask;
+
+            while (w.slots[at] != 0) { at = (at + 1) & w.mask; }
+            w.list.push(*word);
+            w.kinds.push(kind);
+            w.slots[at] = w.list.len;
+        }
+    }
+    return w;
+}
+
+impl Words {
+    /// kind (list index) of the word at bytes i..j of text, or -1
+    export fn kind_at(self: &Words, text: &string, i: i64, j: i64) -> i64 {
+        if (self.list.len == 0) {
+            return -1;
+        }
+        let n: i64 = j - i;
+        var at: i64 = hash_at(text, i, j) & self.mask;
+
+        while (self.slots[at] != 0) {
+            let k: i64 = self.slots[at] - 1;
+            let w: &self::&string = &self.list[k];
+
+            if (w.len == n) {
+                var same: bool = true;
+
+                for (let b: i64 in 0..n) {
+                    if (w[b] != text[i + b]) {
+                        same = false;
+                        break;
+                    }
+                }
+                if (same) {
+                    return self.kinds[k];
+                }
+            }
+            at = (at + 1) & self.mask;
+        }
+        return -1;
+    }
+
+    /// kind of word, or -1
+    export fn kind(self: &Words, word: &string) -> i64 { return self.kind_at(word, 0, word.len); }
+
+    /// is word in the table?
+    export fn has(self: &Words, word: &string) -> bool {
+        return self.kind_at(word, 0, word.len) >= 0;
+    }
+}
+
+/// is word in set? (for short lists; use Words for a language's words)
+export fn one_of(word: &string, set: &string[]) -> bool {
+    for (let w: string in set) {
+        if (str::eq(w, *word)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// end of the identifier at i (dollar: $ counts as a name character)
+export fn ident_end(text: &string, i: i64, n: i64, dollar: bool) -> i64 {
+    var j: i64 = i;
+
+    while (j < n && (is_ident(text[j]) || (dollar && text[j] == '$'))) { j += 1; }
+    return j;
+}
+
+// ---- C family -------------------------------------------------------------------
+
+/// a C-like language's features (its words are passed to clike)
+export struct CLike {
+    export nested: bool = false;            // /* */ nests (Swift)
+    export template: bool = false;          // multi-line `...` strings (JavaScript)
+    export triple: bool = false;            // multi-line """ strings (Swift)
+    export preproc: bool = false;           // # lines are directives (C)
+    export pound: bool = false;             // #name is a directive anywhere (Swift: #if,
+                                            //   #available)
+    export attrs: bool = false;             // @name is an attribute (Swift; JavaScript
+                                            //   decorators)
+    export quotes: bool = false;            // '...' is a literal (C characters, JavaScript
+                                            //   strings)
+    export regex: bool = false;             // /.../ in value position is a regex (JavaScript)
+    export dollar: bool = false;            // $ is a name character (JavaScript)
+    export raw: bool = false;               // multi-line R"x(...)x" strings (C++)
+    export separators: bool = false;        // ' digit separators (C++: 1'000'000)
+}
+
+/// states: 0 code; 1..99 in /* */ (the depth, if nested); 100 in a
+/// template string; 101 in a triple-quoted string; 102 in a raw string
+export let IN_TEMPLATE: i64 = 100;
+export let IN_TRIPLE: i64 = 101;
+export let IN_RAW: i64 = 102;
