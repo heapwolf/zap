@@ -326,3 +326,121 @@ fn pattern_here(text: &string, lo: i64, i: i64) -> bool {
     return str::eq(w, "return") || str::eq(w, "typeof") || str::eq(w, "case") || str::eq(w, "in") ||
         str::eq(w, "of") || str::eq(w, "delete") || str::eq(w, "void") || str::eq(w, "yield");
 }
+
+// end of the regex at i: past its closing / (not inside [...]) and its flags
+fn pattern_end(text: &string, i: i64, n: i64) -> i64 {
+    var j: i64 = i + 1;
+    var in_set: bool = false;
+
+    while (j < n) {
+        let c: u8 = text[j];
+
+        if (c == '\\') {
+            j += 2;
+            continue;
+        }
+        if (c == '[') { in_set = true; }
+        if (c == ']') { in_set = false; }
+        if (c == '/' && !in_set) {
+            j += 1;
+
+            while (j < n && is_ident(text[j])) { j += 1; }
+            return j;
+        }
+        j += 1;
+    }
+    return -1;
+}
+
+/// lex bytes lo..hi of text as language spec (words: its keywords, types,
+/// constants), from state -> next line's state
+export fn clike(
+    text: &string, lo: i64, hi: i64, state: i64, mut out: &Hl[], spec: &CLike, words: &Words
+) -> i64 {
+    let n: i64 = limit_to(text, lo, hi);
+    var i: i64 = lo;
+
+    // continue what the previous line left open
+    if (state >= 1 && state < 100) {
+        let (e, d) = comment_end(text, i, n, state, spec.nested);
+
+        add(out, i, e, Group::Comment);
+        if (d > 0) {
+            return d;
+        }
+        i = e;
+    } else if (state == IN_TEMPLATE) {
+        let (e, closed) = template_end(text, i, n);
+
+        add(out, i, e, Group::String);
+        if (!closed) {
+            return IN_TEMPLATE;
+        }
+        i = e;
+    } else if (state == IN_TRIPLE) {
+        let (e, closed) = triple_end(text, i, n);
+
+        add(out, i, e, Group::String);
+        if (!closed) {
+            return IN_TRIPLE;
+        }
+        i = e;
+    } else if (state == IN_RAW) {
+        let (e, closed) = raw_end(text, i, n, "", true);
+
+        add(out, i, e, Group::String);
+        if (!closed) {
+            return IN_RAW;
+        }
+        i = e;
+    }
+    // (first non-space: where a C directive starts)
+    var first: i64 = i;
+
+    while (first < n && is_space(text[first])) { first += 1; }
+
+    while (i < n) {
+        let c: u8 = text[i];
+        var c2: u8 = 0;
+
+        if (i + 1 < n) { c2 = text[i + 1]; }
+        if (c == '/' && c2 == '/') {
+            add(out, i, n, Group::Comment);
+            return 0;
+        }
+        if (c == '/' && c2 == '*') {
+            let (e, d) = comment_end(text, i + 2, n, 1, spec.nested);
+
+            add(out, i, e, Group::Comment);
+            if (d > 0) {
+                return d;
+            }
+            i = e;
+            continue;
+        }
+        if (c == '"') {
+            if (spec.triple && c2 == '"' && i + 2 < n && text[i + 2] == '"') {
+                let (e, closed) = triple_end(text, i + 3, n);
+
+                add(out, i, e, Group::String);
+                if (!closed) {
+                    return IN_TRIPLE;
+                }
+                i = e;
+                continue;
+            }
+            let j: i64 = string_end(text, i, n, '"');
+
+            add(out, i, j, Group::String);
+            i = j;
+            continue;
+        }
+        if (c == '\'' && spec.quotes) {
+            let j: i64 = string_end(text, i, n, '\'');
+
+            add(out, i, j, Group::String);
+            i = j;
+            continue;
+        }
+        if (c == '`' && spec.template) {
+            let (e, closed) = template_end(text, i + 1, n);
