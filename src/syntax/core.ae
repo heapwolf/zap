@@ -444,3 +444,120 @@ export fn clike(
         }
         if (c == '`' && spec.template) {
             let (e, closed) = template_end(text, i + 1, n);
+
+            add(out, i, e, Group::String);
+            if (!closed) {
+                return IN_TEMPLATE;
+            }
+            i = e;
+            continue;
+        }
+        if (c == '#' && ((spec.preproc && i == first) || spec.pound) && i + 1 < n) {
+            // #include <file>: the directive, then the file as a string
+            var j: i64 = i + 1;
+
+            while (spec.preproc && j < n && is_space(text[j])) { j += 1; }
+            let e: i64 = ident_end(text, j, n, false);
+
+            if (e > j) {
+                add(out, i, e, Group::Constant);
+                let word: string = str::substr(*text, j, e - j);
+
+                if (spec.preproc && (str::eq(word, "include") || str::eq(word, "import"))) {
+                    var k: i64 = e;
+
+                    while (k < n && is_space(text[k])) { k += 1; }
+                    if (k < n && text[k] == '<') {
+                        var m: i64 = k;
+
+                        while (m < n && text[m] != '>') { m += 1; }
+                        if (m < n) { m += 1; }
+                        add(out, k, m, Group::String);
+                        i = m;
+                        continue;
+                    }
+                }
+                i = e;
+                continue;
+            }
+        }
+        if (c == '@' && spec.attrs && i + 1 < n && is_ident_start(text[i + 1])) {
+            let e: i64 = ident_end(text, i + 1, n, spec.dollar);
+
+            add(out, i, e, Group::Constant);
+            i = e;
+            continue;
+        }
+        if (c == '/' && spec.regex && pattern_here(text, lo, i)) {
+            let e: i64 = pattern_end(text, i, n);
+
+            if (e > i) {
+                add(out, i, e, Group::Escape);
+                i = e;
+                continue;
+            }
+        }
+        if (is_digit(c) || (c == '.' && is_digit(c2))) {
+            var j: i64 = number_end(text, i, n);
+
+            while (spec.separators && j + 1 < n && text[j] == '\'' && is_ident(text[j + 1])) {
+                j = number_end(text, j + 1, n);
+            }
+            add(out, i, j, Group::Number);
+            i = j;
+            continue;
+        }
+        // R"x(...)x", optionally prefixed: LR, uR, UR, u8R
+        if (spec.raw && (c == 'R' || c == 'L' || c == 'u' || c == 'U')) {
+            var q: i64 = i;
+
+            while (q < n && q - i < 3 && (text[q] == 'L' || text[q] == 'u' || text[q] == 'U' ||
+                text[q] == '8')) {
+                q += 1;
+            }
+            if (q + 1 < n && text[q] == 'R' && text[q + 1] == '"') {
+                let open: i64 = str::find_from(*text, "(", q + 2) ?? -1;
+
+                if (open > 0 && open < n && open - q - 2 <= 16) {
+                    let delim: string = str::substr(*text, q + 2, open - q - 2);
+                    let (e, closed) = raw_end(text, open + 1, n, delim, false);
+
+                    add(out, i, e, Group::String);
+                    if (!closed) {
+                        return IN_RAW;
+                    }
+                    i = e;
+                    continue;
+                }
+            }
+        }
+        if (is_ident_start(c) || (spec.dollar && c == '$')) {
+            let j: i64 = ident_end(text, i, n, spec.dollar);
+            // (words: keywords 0, types 1, constants 2)
+            let kind: i64 = words.kind_at(text, i, j);
+            var k: i64 = j;
+
+            while (k < n && is_space(text[k])) { k += 1; }
+            if (kind == 0) {
+                add(out, i, j, Group::Keyword);
+            } else if (kind == 1) {
+                add(out, i, j, Group::Type);
+            } else if (kind == 2) {
+                add(out, i, j, Group::Constant);
+            } else if (k < n && text[k] == '(') {
+                add(out, i, j, Group::Function);
+            } else if (c >= 'A' && c <= 'Z') {
+                add(out, i, j, Group::Type);
+            }
+            i = j;
+            continue;
+        }
+        if (c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '=' || c == '<' ||
+            c == '>' || c == '!' || c == '&' || c == '|' || c == '^' || c == '~' || c == '?' ||
+            c == ':') {
+            add(out, i, i + 1, Group::Operator);
+        }
+        i += 1;
+    }
+    return 0;
+}

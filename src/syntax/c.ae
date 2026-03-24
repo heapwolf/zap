@@ -1,0 +1,44 @@
+//! C: keywords, types, preprocessor directives (#include's file as a
+//! string), comments, strings, characters, numbers.
+
+import { Hl, CLike, clike, Words, words } from "core.ae";
+
+/// keywords (types are separate)
+export let KEYWORDS: string[] = [
+    "auto", "break", "case", "const", "continue", "default", "do", "else", "enum", "extern", "for",
+    "goto", "if", "inline", "register", "restrict", "return", "sizeof", "static", "struct",
+    "switch", "typedef", "union", "volatile", "while", "_Alignas", "_Alignof", "_Atomic",
+    "_Generic", "_Noreturn", "_Static_assert", "_Thread_local", "alignas", "alignof",
+    "static_assert", "thread_local", "typeof", "constexpr"
+];
+
+/// types, plus common standard library ones
+export let TYPES: string[] = [
+    "char", "short", "int", "long", "float", "double", "void", "signed", "unsigned", "bool",
+    "_Bool", "_Complex", "size_t", "ssize_t", "ptrdiff_t", "intptr_t", "uintptr_t", "int8_t",
+    "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "intmax_t",
+    "uintmax_t", "wchar_t", "char16_t", "char32_t", "FILE", "va_list", "off_t", "pid_t",
+    "time_t"
+];
+
+/// constants and preprocessor names
+export let CONSTANTS: string[] = [
+    "NULL", "true", "false", "nullptr", "EOF", "stdin", "stdout", "stderr", "errno",
+    "__FILE__", "__LINE__", "__func__", "__DATE__", "__TIME__"
+];
+
+// all three, for lookup (keywords 0, types 1, constants 2)
+let WORDS: Words = words(&[std::copy(KEYWORDS), std::copy(TYPES), std::copy(CONSTANTS)]);
+
+fn spec() -> CLike {
+    return CLike {
+        preproc: true, quotes: true
+    };
+}
+
+/// lex bytes lo..hi of a C line, from state -> next line's state
+export fn line(text: &string, lo: i64, hi: i64, state: i64, mut out: &Hl[]) -> i64 {
+    let s: CLike = spec();
+
+    return clike(text, lo, hi, state, out, &s, &WORDS);
+}
