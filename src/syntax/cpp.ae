@@ -1,0 +1,45 @@
+//! C++: the C lexer with C++ keywords and types, multi-line R"(raw
+//! strings)", and ' digit separators.
+
+import { Hl, CLike, clike, Words, words } from "core.ae";
+
+/// keywords (including C's; types are separate)
+export let KEYWORDS: string[] = [
+    "alignas", "alignof", "asm", "auto", "break", "case", "catch", "class", "co_await",
+    "co_return", "co_yield", "concept", "const", "consteval", "constexpr", "constinit",
+    "const_cast", "continue", "decltype", "default", "delete", "do", "dynamic_cast", "else",
+    "enum", "explicit", "export", "extern", "final", "for", "friend", "goto", "if", "import",
+    "inline", "module", "mutable", "namespace", "new", "noexcept", "operator", "override",
+    "private", "protected", "public", "register", "reinterpret_cast", "requires", "return",
+    "sizeof", "static", "static_assert", "static_cast", "struct", "switch", "template", "this",
+    "thread_local", "throw", "try", "typedef", "typeid", "typename", "union", "using", "virtual",
+    "volatile", "while", "and", "or", "not", "xor", "bitand", "bitor", "compl", "and_eq", "or_eq",
+    "xor_eq", "not_eq"
+];
+
+/// types, plus common standard library ones
+export let TYPES: string[] = [
+    "bool", "char", "char8_t", "char16_t", "char32_t", "wchar_t", "short", "int", "long", "float",
+    "double", "void", "signed", "unsigned", "size_t", "ssize_t", "ptrdiff_t", "nullptr_t",
+    "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t",
+    "intptr_t", "uintptr_t", "std", "string", "string_view", "vector", "array", "map",
+    "unordered_map", "set", "unordered_set", "optional", "variant", "unique_ptr", "shared_ptr",
+    "weak_ptr", "span", "pair", "tuple", "function"
+];
+
+/// constants
+export let CONSTANTS: string[] = [
+    "true", "false", "nullptr", "NULL", "EOF", "__FILE__", "__LINE__", "__func__", "__cplusplus"
+];
+
+// all three, for lookup (keywords 0, types 1, constants 2)
+let WORDS: Words = words(&[std::copy(KEYWORDS), std::copy(TYPES), std::copy(CONSTANTS)]);
+
+fn spec() -> CLike { return CLike { preproc: true, quotes: true, raw: true, separators: true }; }
+
+/// lex bytes lo..hi of a C++ line, from state -> next line's state
+export fn line(text: &string, lo: i64, hi: i64, state: i64, mut out: &Hl[]) -> i64 {
+    let s: CLike = spec();
+
+    return clike(text, lo, hi, state, out, &s, &WORDS);
+}
