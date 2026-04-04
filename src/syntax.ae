@@ -590,3 +590,102 @@ fn expect(lang: string, text: string, want: string, after: i64) -> bool {
     }
     return 0;
 }
+
+#test fn highlights_cpp() -> i32 {
+    if (!expect(
+        "cpp", "template <typename T> constexpr auto n = 1'000'000;",
+        "keyword:template operator:< keyword:typename type:T operator:> keyword:constexpr keyword:auto operator:= number:1'000'000",
+        0
+    )) {
+        return 1;
+    }
+    if (!expect(
+        "cpp", "auto s = R\"x(a \"q\" )\" b)x\"; char c = 'z';",
+        "keyword:auto operator:= string:R\"x(a \"q\" )\" b)x\" type:char operator:= string:'z'", 0
+    )) {
+        return 2;
+    }
+    // spans lines: from the opening to the closing )"
+    if (!expect(
+        "cpp", "std::string q = R\"(line one",
+        "type:std operator:: operator:: type:string operator:= string:R\"(line one", 102
+    )) {
+        return 3;
+    }
+    let (got, st) = pieces("cpp", "two)\"; nullptr", 102);
+
+    if (!str::eq(got, "string:two)\" constant:nullptr") || st != 0) {
+        println(got);
+        return 4;
+    }
+    return 0;
+}
+
+#test fn highlights_swift() -> i32 {
+    if (!expect(
+        "swift", "@MainActor func go(x: Int) async -> String? { nil }",
+        "constant:@MainActor keyword:func function:go operator:: type:Int keyword:async operator:- operator:> type:String operator:? constant:nil",
+        0
+    )) {
+        return 1;
+    }
+    // """ spanning lines; /* /* nested */ */
+    if (!expect("swift", "let s = \"\"\"", "keyword:let operator:= string:\"\"\"", 101)) {
+        return 2;
+    }
+    let (got, st) = pieces("swift", "text\"\"\" + 1", 101);
+
+    if (!str::eq(got, "string:text\"\"\" operator:+ number:1") || st != 0) {
+        return 3;
+    }
+    if (!expect("swift", "/* a /* b */ c", "comment:/* a /* b */ c", 1)) {
+        return 4;
+    }
+    if (!expect("swift", "#if DEBUG", "constant:#if type:DEBUG", 0)) {
+        return 5;
+    }
+    return 0;
+}
+
+#test fn highlights_js() -> i32 {
+    if (!expect(
+        "js", "const re = /a[/]b/g; let t = `x ${y}",
+        "keyword:const operator:= escape:/a[/]b/g keyword:let operator:= string:`x ${y}", 100
+    )) {
+        return 1;
+    }
+    if (!expect("js", "a / b / c", "operator:/ operator:/", 0)) {
+        return 2;
+    }
+    if (!expect(
+        "js", "export async function $f() { return this.x ?? null }",
+        "keyword:export keyword:async keyword:function function:$f keyword:return constant:this operator:? operator:? constant:null",
+        0
+    )) {
+        return 3;
+    }
+    return 0;
+}
+
+#test fn highlights_css() -> i32 {
+    if (!expect(
+        "css", "@media (max-width: 600px) {",
+        "keyword:@media type:max-width operator:: number:600px punct:{", 2
+    )) {
+        return 1;
+    }
+    let (got, st) = pieces("css", "  .a > p:hover { color: #fff !important; margin: 0 auto }", 2);
+
+    if (!str::eq(
+        got,
+        "function:.a operator:> keyword:p constant::hover punct:{ type:color operator:: number:#fff keyword:!important type:margin operator:: number:0 constant:auto punct:}"
+    ) ||
+        st != 2) {
+        println(got);
+        return 2;
+    }
+    if (!expect("css", "a { /* open", "keyword:a punct:{ comment:/* open", 3)) {
+        return 3;
+    }
+    return 0;
+}
