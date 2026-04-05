@@ -1,0 +1,226 @@
+//! CSS: selectors (elements, .classes, #ids, :pseudo-classes,
+//! [attributes]), @rules, properties and values (words, numbers with
+//! units, #colors, functions, strings, !important), multi-line /* */
+//! comments.
+//!
+//! State: the { } depth at line start, times two, plus 1 if in a comment.
+//! (Inside { }, a name before a : is a property; outside, or before a {,
+//! a selector.)
+
+import str from "std/string";
+import {
+    Hl, Group, add, is_ident, is_digit, is_space, limit_to, string_end, number_end
+} from "core.ae";
+
+/// at-rules and common value words (for completion)
+export let KEYWORDS: string[] = [
+    "@media", "@import", "@font-face", "@keyframes", "@supports", "@layer", "@container",
+    "@charset", "@namespace", "@page", "!important", "inherit", "initial", "unset", "revert",
+    "none", "auto"
+];
+
+// can c be in a CSS name (letters, digits, - and _)?
+fn css_ident(c: u8) -> bool { return is_ident(c) || c == '-'; }
+
+// end of the name at i
+fn name_end(text: &string, i: i64, n: i64) -> i64 {
+    var j: i64 = i;
+
+    while (j < n && css_ident(text[j])) { j += 1; }
+    return j;
+}
+
+// is the name ending at j a property (followed by :, with no { before the next ; } or ))?
+fn property_at(text: &string, j: i64, n: i64) -> bool {
+    var k: i64 = j;
+
+    while (k < n && is_space(text[k])) { k += 1; }
+    if (k >= n || text[k] != ':') {
+        return false;
+    }
+
+    while (k < n && text[k] != ';' && text[k] != '}' && text[k] != ')') {
+        if (text[k] == '{') {
+            return false;
+        }
+        k += 1;
+    }
+    return true;
+}
+
+/// lex bytes lo..hi of a CSS line, from state -> next line's state
+export fn line(text: &string, lo: i64, hi: i64, state: i64, mut out: &Hl[]) -> i64 {
+    let n: i64 = limit_to(text, lo, hi);
+    var depth: i64 = state / 2;
+    var i: i64 = lo;
+
+    if (state % 2 == 1) {
+        let close: i64 = str::find_from(*text, "*/", i) ?? -1;
+
+        if (close < 0 || close >= n) {
+            add(out, i, n, Group::Comment);
+            return state;
+        }
+        add(out, i, close + 2, Group::Comment);
+        i = close + 2;
+    }
+    var value: bool = false;        // after a property's :
+    var paren: i64 = 0;             // inside ( ), as in an at-rule's (max-width: 600px)
+
+    while (i < n) {
+        let c: u8 = text[i];
+
+        if (c == '/' && i + 1 < n && text[i + 1] == '*') {
+            let close: i64 = str::find_from(*text, "*/", i + 2) ?? -1;
+
+            if (close < 0 || close >= n) {
+                add(out, i, n, Group::Comment);
+                return depth * 2 + 1;
+            }
+            add(out, i, close + 2, Group::Comment);
+            i = close + 2;
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            let j: i64 = string_end(text, i, n, c);
+
+            add(out, i, j, Group::String);
+            i = j;
+            continue;
+        }
+        if (c == '{') {
+            depth += 1;
+            value = false;
+            add(out, i, i + 1, Group::Punct);
+            i += 1;
+            continue;
+        }
+        if (c == '}') {
+            if (depth > 0) { depth -= 1; }
+            value = false;
+            add(out, i, i + 1, Group::Punct);
+            i += 1;
+            continue;
+        }
+        if (c == ';') {
+            value = false;
+            i += 1;
+            continue;
+        }
+        if (c == '(') {
+            paren += 1;
+            i += 1;
+            continue;
+        }
+        if (c == ')') {
+            if (paren > 0) {
+                paren -= 1;
+                if (paren == 0) { value = false; }
+            }
+            i += 1;
+            continue;
+        }
+        if (c == '@') {
+            let j: i64 = name_end(text, i + 1, n);
+
+            add(out, i, j, Group::Keyword);
+            i = j;
+            continue;
+        }
+        if (c == '!' && i + 1 < n && css_ident(text[i + 1])) {
+            let j: i64 = name_end(text, i + 1, n);
+
+            add(out, i, j, Group::Keyword);
+            i = j;
+            continue;
+        }
+        if (value) {
+            // a value: #color, number with unit, function, word
+            if (c == '#') {
+                let j: i64 = name_end(text, i + 1, n);
+
+                add(out, i, j, Group::Number);
+                i = j;
+                continue;
+            }
+            if (is_digit(c) || (c == '.' && i + 1 < n && is_digit(text[i + 1])) ||
+                (c == '-' && i + 1 < n && is_digit(text[i + 1]))) {
+                var j: i64 = number_end(text, i + 1, n);
+
+                while (j < n && (css_ident(text[j]) || text[j] == '%')) { j += 1; }
+                add(out, i, j, Group::Number);
+                i = j;
+                continue;
+            }
+            if (css_ident(c)) {
+                let j: i64 = name_end(text, i, n);
+
+                if (j < n && text[j] == '(') {
+                    add(out, i, j, Group::Function);
+                } else {
+                    add(out, i, j, Group::Constant);
+                }
+                i = j;
+                continue;
+            }
+            if (c == ',' || c == '/') { add(out, i, i + 1, Group::Operator); }
+            i += 1;
+            continue;
+        }
+        if (is_digit(c)) {
+            var j: i64 = number_end(text, i, n);
+
+            while (j < n && (css_ident(text[j]) || text[j] == '%')) { j += 1; }
+            add(out, i, j, Group::Number);
+            i = j;
+            continue;
+        }
+        if (css_ident(c)) {
+            let j: i64 = name_end(text, i, n);
+
+            if ((depth > 0 || paren > 0) && property_at(text, j, n)) {
+                add(out, i, j, Group::Type);
+                // the : after it starts the value
+                var k: i64 = j;
+
+                while (k < n && text[k] != ':') { k += 1; }
+                add(out, k, k + 1, Group::Operator);
+                value = true;
+                i = k + 1;
+                continue;
+            }
+            add(out, i, j, Group::Keyword);      // element
+            i = j;
+            continue;
+        }
+        if ((c == '.' || c == '#') && i + 1 < n && css_ident(text[i + 1])) {
+            let j: i64 = name_end(text, i + 1, n);
+
+            add(out, i, j, Group::Function);     // class or id
+            i = j;
+            continue;
+        }
+        if (c == ':') {
+            var j: i64 = i + 1;
+
+            if (j < n && text[j] == ':') { j += 1; }
+            let e: i64 = name_end(text, j, n);
+
+            add(out, i, e, Group::Constant);     // pseudo-class or pseudo-element
+            i = e;
+            continue;
+        }
+        if (c == '[') {
+            let e: i64 = name_end(text, i + 1, n);
+
+            add(out, i + 1, e, Group::Type);     // attribute
+            i = e;
+            continue;
+        }
+        if (c == '>' || c == '+' || c == '~' || c == '*' || c == ',') {
+            add(out, i, i + 1, Group::Operator);
+        }
+        i += 1;
+    }
+    return depth * 2;
+}
