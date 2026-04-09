@@ -689,3 +689,125 @@ fn expect(lang: string, text: string, want: string, after: i64) -> bool {
     }
     return 0;
 }
+
+#test fn highlights_html() -> i32 {
+    if (!expect(
+        "html", "<a href=\"x\" hidden>&amp; b</a>",
+        "punct:< keyword:a type:href operator:= string:\"x\" type:hidden punct:> escape:&amp; punct:</ keyword:a punct:>",
+        0
+    )) {
+        return 1;
+    }
+    if (!expect("html", "<!-- a", "comment:<!-- comment: a", 1)) {
+        return 2;
+    }
+    // <script>: its contents are JavaScript, continuing to the next line
+    if (!expect(
+        "html", "<script>let x = `",
+        "punct:< keyword:script punct:> keyword:let operator:= string:`", 3 + 8 * 100
+    )) {
+        return 3;
+    }
+    let (got, st) = pieces("html", "`; </script><p>", 3 + 8 * 100);
+
+    if (!str::eq(got, "string:` punct:</ keyword:script punct:> punct:< keyword:p punct:>") ||
+        st != 0) {
+        println(got);
+        return 4;
+    }
+    if (!expect(
+        "html", "<style>p { color: red }</style>",
+        "punct:< keyword:style punct:> keyword:p punct:{ type:color operator:: constant:red punct:} punct:</ keyword:style punct:>",
+        0
+    )) {
+        return 5;
+    }
+    return 0;
+}
+
+#test fn highlights_python() -> i32 {
+    if (!expect(
+        "python", "@app.route(\"/\") # home",
+        "constant:@app.route string:\"/\" comment:# home", 0
+    )) {
+        return 1;
+    }
+    if (!expect(
+        "python", "async def go(self, n: int = 0x1F) -> None:",
+        "keyword:async keyword:def function:go constant:self operator:: type:int operator:= number:0x1F operator:- operator:> constant:None operator::",
+        0
+    )) {
+        return 2;
+    }
+    // f-strings, prefixes; \"\"\" spanning lines
+    if (!expect(
+        "python", "x = rb'\\d' + f\"{y}\"", "operator:= string:rb'\\d' operator:+ string:f\"{y}\"",
+        0
+    )) {
+        return 3;
+    }
+    if (!expect("python", "    \"\"\"A docstring", "string:\"\"\"A docstring", 1)) {
+        return 4;
+    }
+    let (got, st) = pieces("python", "ends here\"\"\" + 1", 1);
+
+    if (!str::eq(got, "string:ends here\"\"\" operator:+ number:1") || st != 0) {
+        println(got);
+        return 5;
+    }
+    // match is a keyword at a statement start, a name elsewhere
+    if (!expect("python", "match cmd:", "keyword:match operator::", 0)) {
+        return 6;
+    }
+    if (!expect("python", "m = re.match(p, s)", "operator:= function:match", 0)) {
+        return 7;
+    }
+    if (!expect("python", "class Node(Base):", "keyword:class type:Node type:Base operator::", 0)) {
+        return 8;
+    }
+    return 0;
+}
+
+#test fn highlights_mermaid() -> i32 {
+    if (!expect("mermaid", "graph LR", "keyword:graph constant:LR", 0)) {
+        return 1;
+    }
+    if (!expect(
+        "mermaid", "    A[Start] -->|yes| B{Is it?} %% why",
+        "function:A punct:[ string:Start punct:] operator:--> punct:| string:yes punct:| function:B punct:{ string:Is it? punct:} comment:%% why",
+        0
+    )) {
+        return 2;
+    }
+    if (!expect(
+        "mermaid", "    Alice->>John: Hello John",
+        "operator:->> operator:: string:Hello John", 0
+    )) {
+        return 3;
+    }
+    if (!expect(
+        "mermaid", "    CUSTOMER ||--o{ ORDER : places",
+        "operator:||--o{ operator:: string:places", 0
+    )) {
+        return 4;
+    }
+    if (!expect(
+        "mermaid", "    id1((round)):::big",
+        "function:id1 punct:(( string:round punct:)) constant::::big", 0
+    )) {
+        return 5;
+    }
+    if (!expect("mermaid", "    \"Dogs\" : 386", "string:\"Dogs\" operator:: number:386", 0)) {
+        return 6;
+    }
+    if (!expect("mermaid", "---", "punct:---", 1)) {
+        return 7;
+    }
+    let (got, st) = pieces("mermaid", "title: Flow", 1);
+
+    if (!str::eq(got, "type:title operator:: string: Flow") || st != 1) {
+        println(got);
+        return 8;
+    }
+    return 0;
+}

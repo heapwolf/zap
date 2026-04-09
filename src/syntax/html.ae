@@ -1,0 +1,198 @@
+//! HTML: tags (names, attributes, values), multi-line <!-- comments -->
+//! and tags, &entities;, and <script> and <style> contents highlighted as
+//! JavaScript and CSS.
+//!
+//! State: what the line starts in (0 text, 1 comment, 2 tag, 3 in <script>,
+//! 4 in <style>, 5 a <script> tag, 6 a <style> tag), plus 8 times the
+//! embedded JavaScript or CSS state.
+
+import str from "std/string";
+import { Hl, Group, add, is_ident, is_space, limit_to } from "core.ae";
+import js from "js.ae";
+import css from "css.ae";
+
+/// common elements (for completion)
+export let KEYWORDS: string[] = [
+    "html", "head", "body", "title", "meta", "link", "script", "style", "div", "span", "p", "a",
+    "img", "ul", "ol", "li", "table", "thead", "tbody", "tr", "th", "td", "form", "input",
+    "button", "label", "select", "option", "textarea", "header", "footer", "main", "nav",
+    "section", "article", "aside", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "code", "br", "hr",
+    "class", "href", "src", "alt", "type", "rel", "charset", "content"
+];
+
+let TEXT: i64 = 0;
+let COMMENT: i64 = 1;
+let TAG: i64 = 2;
+let SCRIPT: i64 = 3;
+let STYLE: i64 = 4;
+let SCRIPT_TAG: i64 = 5;
+let STYLE_TAG: i64 = 6;
+
+fn tag_char(c: u8) -> bool { return is_ident(c) || c == '-' || c == ':' || c == '.'; }
+
+// start of </name at or after i (case-insensitive; -1: not on this line)
+fn closing(text: &string, i: i64, n: i64, name: string) -> i64 {
+    let low: string = str::to_lower(*text);
+
+    if (let k = str::find_from(low, "</\(name)", i)) {
+        if (k < n) {
+            return k;
+        }
+    }
+    return -1;
+}
+
+// a tag's attributes from i up to its > -> (stop position, closed?)
+fn attributes(text: &string, i0: i64, n: i64, mut out: &Hl[]) -> (i64, bool) {
+    var i: i64 = i0;
+
+    while (i < n) {
+        let c: u8 = text[i];
+
+        if (c == '>') {
+            add(out, i, i + 1, Group::Punct);
+            return (i + 1, true);
+        }
+        if (c == '/' && i + 1 < n && text[i + 1] == '>') {
+            add(out, i, i + 2, Group::Punct);
+            return (i + 2, true);
+        }
+        if (c == '"' || c == '\'') {
+            var j: i64 = i + 1;
+
+            while (j < n && text[j] != c) { j += 1; }
+            if (j < n) { j += 1; }
+            add(out, i, j, Group::String);
+            i = j;
+            continue;
+        }
+        if (c == '=') {
+            add(out, i, i + 1, Group::Operator);
+            // an unquoted value
+            var j: i64 = i + 1;
+
+            if (j < n && text[j] != '"' && text[j] != '\'' && !is_space(text[j])) {
+                while (j < n && !is_space(text[j]) && text[j] != '>') { j += 1; }
+                add(out, i + 1, j, Group::String);
+            }
+            i = j;
+            continue;
+        }
+        if (tag_char(c)) {
+            var j: i64 = i;
+
+            while (j < n && tag_char(text[j])) { j += 1; }
+            add(out, i, j, Group::Type);
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+    return (n, false);
+}
+
+/// lex bytes lo..hi of a HTML line, from state -> next line's state
+export fn line(text: &string, lo: i64, hi: i64, state: i64, mut out: &Hl[]) -> i64 {
+    let n: i64 = limit_to(text, lo, hi);
+    var mode: i64 = state % 8;
+    var inner: i64 = state / 8;
+    var i: i64 = lo;
+
+    while (i < n || mode == SCRIPT || mode == STYLE) {
+        if (mode == COMMENT) {
+            if (let k = str::find_from(*text, "-->", i)) {
+                if (k + 3 <= n) {
+                    add(out, i, k + 3, Group::Comment);
+                    i = k + 3;
+                    mode = TEXT;
+                    continue;
+                }
+            }
+            add(out, i, n, Group::Comment);
+            return COMMENT;
+        }
+        if (mode == TAG || mode == SCRIPT_TAG || mode == STYLE_TAG) {
+            let (e, closed) = attributes(text, i, n, out);
+
+            i = e;
+            if (!closed) {
+                return mode;
+            }
+            if (mode == SCRIPT_TAG) {
+                mode = SCRIPT;
+            } else if (mode == STYLE_TAG) {
+                mode = STYLE;
+            } else {
+                mode = TEXT;
+            }
+            inner = 0;
+            continue;
+        }
+        if (mode == SCRIPT || mode == STYLE) {
+            var name: string = "script";
+
+            if (mode == STYLE) { name = "style"; }
+            let k: i64 = closing(text, i, n, name);
+            var e: i64 = n;
+
+            if (k >= 0) { e = k; }
+            if (e > i || k < 0) {
+                if (mode == SCRIPT) {
+                    inner = js::line(text, i, e, inner, out);
+                } else {
+                    inner = css::line(text, i, e, inner, out);
+                }
+            }
+            if (k < 0) {
+                return mode + 8 * inner;
+            }
+            i = k;
+            mode = TEXT;
+            inner = 0;
+            continue;
+        }
+        // text: a comment, a tag, an entity
+        let c: u8 = text[i];
+
+        if (c == '<' && str::starts_with(str::substr(*text, i, 4), "<!--")) {
+            add(out, i, i + 4, Group::Comment);
+            i += 4;
+            mode = COMMENT;
+            continue;
+        }
+        if (c == '<' && i + 1 < n &&
+            (tag_char(text[i + 1]) || text[i + 1] == '/' || text[i + 1] == '!')) {
+            var j: i64 = i + 1;
+            var ending: bool = false;
+
+            if (text[j] == '/' || text[j] == '!') {
+                ending = text[j] == '/';
+                j += 1;
+            }
+            add(out, i, j, Group::Punct);
+            var e: i64 = j;
+
+            while (e < n && tag_char(text[e])) { e += 1; }
+            add(out, j, e, Group::Keyword);
+            let name: string = str::to_lower(str::substr(*text, j, e - j));
+
+            i = e;
+            mode = TAG;
+            if (!ending && str::eq(name, "script")) { mode = SCRIPT_TAG; }
+            if (!ending && str::eq(name, "style")) { mode = STYLE_TAG; }
+            continue;
+        }
+        if (c == '&') {
+            var j: i64 = i + 1;
+
+            while (j < n && j - i < 12 && (is_ident(text[j]) || text[j] == '#')) { j += 1; }
+            if (j < n && text[j] == ';' && j > i + 1) {
+                add(out, i, j + 1, Group::Escape);
+                i = j + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    return mode + 8 * inner;
+}
