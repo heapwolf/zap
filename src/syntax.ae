@@ -811,3 +811,98 @@ fn expect(lang: string, text: string, want: string, after: i64) -> bool {
     }
     return 0;
 }
+
+#test fn highlights_asm() -> i32 {
+    if (!expect(
+        "asm", "_start:  mov rax, [rbp+8]   ; load",
+        "function:_start punct:: keyword:mov type:rax punct:[ type:rbp operator:+ number:8 punct:] comment:; load",
+        0
+    )) {
+        return 1;
+    }
+    if (!expect("asm", "section .text", "constant:section", 0)) {
+        return 2;
+    }
+    if (!expect(
+        "asm", "msg db \"hi\", 0Ah", "function:msg constant:db string:\"hi\" number:0Ah", 0
+    )) {
+        return 3;
+    }
+    if (!expect("asm", "main PROC", "function:main constant:PROC", 0)) {
+        return 4;
+    }
+    // AT&T, GAS directives, /* */ spanning lines
+    if (!expect(
+        "asm", "    movq $5, %rax /* a",
+        "keyword:movq number:$5 type:%rax comment:/* a", 1
+    )) {
+        return 5;
+    }
+    if (!expect("asm", "    .globl main", "constant:.globl", 0)) {
+        return 6;
+    }
+    // ARM: #immediates, // comments; %define
+    if (!expect(
+        "asm", "    add x0, x1, #4 // sum",
+        "keyword:add type:x0 type:x1 number:#4 comment:// sum", 0
+    )) {
+        return 7;
+    }
+    if (!expect("asm", "%define N 4", "constant:%define number:4", 0)) {
+        return 8;
+    }
+    if (!expect("asm", "    rep movsb", "keyword:rep keyword:movsb", 0)) {
+        return 9;
+    }
+    return 0;
+}
+
+#test fn highlights_fences() -> i32 {
+    // a ```python fence: its lines are Python until the closing fence
+    let (g1, s1) = pieces("markdown", "```python", 0);
+
+    if (!str::eq(g1, "code:```python") || s1 < 2) {
+        return 1;
+    }
+    let (g2, s2) = pieces("markdown", "def f(): \"\"\"doc", s1);
+
+    if (!str::eq(g2, "keyword:def function:f operator:: string:\"\"\"doc") || s2 == s1) {
+        println(g2);
+        return 2;
+    }
+    let (g3, s3) = pieces("markdown", "```", s2);
+
+    if (!str::eq(g3, "code:```") || s3 != 0) {
+        return 3;
+    }
+    let (g4, s4) = pieces("markdown", "```mermaid", 0);
+    let (g5, s5) = pieces("markdown", "graph TD", s4);
+
+    if (!str::eq(g5, "keyword:graph constant:TD") || s5 != s4) {
+        println(g5);
+        return 4;
+    }
+    return 0;
+}
+
+#test fn looks_words_up() -> i32 {
+    let w: Words = words(&[["if", "else", "fn"], ["i64", "fn"], ["true"]]);
+    // a word's kind is the first list it is in; looked up in place in a line
+    let line: string = "if x: i64 = true else fnord";
+
+    if (w.kind_at(&line, 0, 2) != 0 || w.kind_at(&line, 6, 9) != 1) {
+        return 1;
+    }
+    if (w.kind_at(&line, 12, 16) != 2 || w.kind_at(&line, 17, 21) != 0) {
+        return 2;
+    }
+    if (w.kind(&"fn") != 0 || w.kind_at(&line, 22, 27) != -1 || w.has(&"f")) {
+        return 3;
+    }
+    let empty: Words = words(&[]);
+
+    if (empty.has(&"if")) {
+        return 4;
+    }
+    return 0;
+}

@@ -1,0 +1,292 @@
+//! Assembly (NASM, MASM, GAS): labels (name:, and MASM's name PROC,
+//! name DB), instructions, directives (.text, section, db, equ, PROC),
+//! preprocessor (%define, %1, #include), registers (x86, ARM, RISC-V;
+//! AT&T %rax), numbers (0x1F 1Fh 0b101 101b; $5 and #5 immediates),
+//! strings, ; // and # comments, multi-line /* */. Case-insensitive.
+//!
+//! State: 0 code, 1 in /* */.
+
+import str from "std/string";
+import {
+    Hl, Group, add, is_ident_start, is_ident, is_digit, is_space, limit_to, string_end, Words, words
+} from "core.ae";
+
+/// directives (without GAS's dot) and operand size words
+export let KEYWORDS: string[] = [
+    "section", "segment", "global", "globl", "extern", "bits", "default", "org", "align", "db",
+    "dw", "dd", "dq", "dt", "do", "dy", "dz", "resb", "resw", "resd", "resq", "rest", "reso",
+    "resy", "resz", "incbin", "times", "equ", "struc", "endstruc", "istruc", "iend", "at",
+    "proc", "endp", "ends", "assume", "end", "model", "public", "extrn", "macro", "endm",
+    "include", "includelib", "local", "label", "byte", "word", "dword", "qword", "tword",
+    "oword", "yword", "zword", "ptr", "short", "near", "far", "rel", "offset"
+];
+
+/// registers not of the prefix-plus-number form
+export let TYPES: string[] = [
+    "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rsp", "rbp", "rip", "eax", "ebx", "ecx", "edx",
+    "esi", "edi", "esp", "ebp", "eip", "ax", "bx", "cx", "dx", "si", "di", "sp", "bp", "ip", "al",
+    "bl", "cl", "dl", "ah", "bh", "ch", "dh", "sil", "dil", "spl", "bpl", "cs", "ds", "es", "fs",
+    "gs", "ss", "rflags", "eflags", "flags", "lr", "pc", "fp", "xzr", "wzr", "nzcv", "fpcr",
+    "fpsr", "cpsr", "spsr", "apsr", "zero", "ra", "gp", "tp"
+];
+
+// words that make the preceding word a name (MASM: main PROC, x DB 1)
+let NAMING: string[] = [
+    "db", "dw", "dd", "dq", "dt", "equ", "proc", "endp", "segment", "ends", "struc", "macro",
+    "label", "resb", "resw", "resd", "resq", "byte", "word", "dword", "qword"
+];
+
+// size words (not directives)
+let SIZES: string[] = [
+    "byte", "word", "dword", "qword", "tword", "oword", "yword", "zword", "ptr", "short", "near",
+    "far", "rel", "offset"
+];
+
+// instruction prefixes (another instruction follows)
+let PREFIXES: string[] = ["rep", "repe", "repz", "repne", "repnz", "lock"];
+
+// prefix-plus-number registers, with each number's max
+let NUMBERED: string[] = [
+    "r", "x", "w", "v", "q", "d", "s", "h", "b", "xmm", "ymm", "zmm", "k", "cr", "dr", "st", "mm",
+    "a", "t", "f"
+];
+let NUMBERED_MAX: i64[] = [
+    31, 30, 30, 31, 31, 31, 31, 31, 31, 31, 31, 31, 7, 15, 7, 7, 7, 7, 6, 31
+];
+
+// each list, for lookup
+let TYPE_WORDS: Words = words(&[std::copy(TYPES)]);
+let NAMING_WORDS: Words = words(&[std::copy(NAMING)]);
+let KEYWORD_WORDS: Words = words(&[std::copy(KEYWORDS)]);
+let SIZE_WORDS: Words = words(&[std::copy(SIZES)]);
+let PREFIX_WORDS: Words = words(&[std::copy(PREFIXES)]);
+
+/// is w (lowercase) a register?
+fn register(w: &string) -> bool {
+    if (TYPE_WORDS.has(w)) {
+        return true;
+    }
+    let n: i64 = w.len;
+    var d: i64 = 0;
+
+    while (d < n && !is_digit(w[d])) { d += 1; }
+    if (d == 0 || d == n) {
+        return false;
+    }
+    var e: i64 = d;
+    var v: i64 = 0;
+
+    while (e < n && is_digit(w[e])) {
+        v = v * 10 + (w[e] - '0') as i64;
+        e += 1;
+    }
+    let p: string = str::substr(*w, 0, d);
+
+    // (x86's r8d r8w r8b)
+    if (e < n) {
+        if (!str::eq(p, "r") || e + 1 != n || (w[e] != 'd' && w[e] != 'w' && w[e] != 'b')) {
+            return false;
+        }
+    }
+
+    for (let k: i64, let q: string in &NUMBERED) {
+        if (str::eq(q, p)) {
+            return v <= NUMBERED_MAX[k];
+        }
+    }
+    return false;
+}
+
+// end of a word: letters, digits, _ . $ @ ? (MASM's @@, NASM's ..@)
+fn word_end(text: &string, i: i64, n: i64) -> i64 {
+    var j: i64 = i;
+
+    while (j < n && (is_ident(text[j]) || text[j] == '.' || text[j] == '$' || text[j] == '@' ||
+        text[j] == '?')) {
+        j += 1;
+    }
+    return j;
+}
+
+// end of the number at i: 0x1F, 1Fh, 0b101, 101b, 1.5e3, 1_000
+fn number_end(text: &string, i: i64, n: i64) -> i64 {
+    var j: i64 = i;
+
+    while (j < n && (is_ident(text[j]) || text[j] == '.')) { j += 1; }
+    return j;
+}
+
+/// lex bytes lo..hi of a assembly line, from state -> next line's state
+export fn line(text: &string, lo: i64, hi: i64, state: i64, mut out: &Hl[]) -> i64 {
+    let n: i64 = limit_to(text, lo, hi);
+    var i: i64 = lo;
+
+    if (state == 1) {
+        let close: i64 = str::find_from(*text, "*/", i) ?? -1;
+
+        if (close < 0 || close >= n) {
+            add(out, i, n, Group::Comment);
+            return 1;
+        }
+        add(out, i, close + 2, Group::Comment);
+        i = close + 2;
+    }
+    var first: i64 = i;
+
+    while (first < n && is_space(text[first])) { first += 1; }
+    var op: bool = true;            // next word is the instruction (or a directive)
+    var words: i64 = 0;             // words so far in the statement
+
+    while (i < n) {
+        let c: u8 = text[i];
+        var c2: u8 = 0;
+
+        if (i + 1 < n) { c2 = text[i + 1]; }
+        if (c == ';' || (c == '/' && c2 == '/')) {
+            add(out, i, n, Group::Comment);
+            return 0;
+        }
+        if (c == '/' && c2 == '*') {
+            let close: i64 = str::find_from(*text, "*/", i + 2) ?? -1;
+
+            if (close < 0 || close >= n) {
+                add(out, i, n, Group::Comment);
+                return 1;
+            }
+            add(out, i, close + 2, Group::Comment);
+            i = close + 2;
+            continue;
+        }
+        if (c == '#') {
+            // #include (.S preprocessor), #4 (ARM immediate), else # comment
+            if (i == first && is_ident_start(c2)) {
+                let e: i64 = word_end(text, i + 1, n);
+
+                add(out, i, e, Group::Constant);
+                i = e;
+                op = false;
+                continue;
+            }
+            if (i + 1 < n && (is_digit(c2) || c2 == '-' || c2 == '+' || c2 == '\'' || c2 == ':')) {
+                var e: i64 = i + 1;
+
+                if (c2 == '-' || c2 == '+') { e += 1; }
+                if (e < n && text[e] == '\'') { e = string_end(text, e, n, '\''); }
+                else { e = number_end(text, e, n); }
+                add(out, i, e, Group::Number);
+                i = e;
+                continue;
+            }
+            add(out, i, n, Group::Comment);
+            return 0;
+        }
+        if (c == '"' || c == '\'' || c == '`') {
+            let j: i64 = string_end(text, i, n, c);
+
+            add(out, i, j, Group::String);
+            i = j;
+            continue;
+        }
+        if (c == '%') {
+            // %rax (AT&T), %define %macro (NASM), %1 (macro argument)
+            let e: i64 = word_end(text, i + 1, n);
+
+            if (e > i + 1) {
+                let w: string = str::to_lower(str::substr(*text, i + 1, e - i - 1));
+
+                if (register(&w)) { add(out, i, e, Group::Type); }
+                else {
+                    add(out, i, e, Group::Constant);
+                    if (i == first) { op = false; }
+                }
+                i = e;
+                continue;
+            }
+        }
+        if (c == '$') {
+            if (i + 1 < n && (is_digit(c2) || c2 == '-')) {
+                var at: i64 = i + 1;
+
+                if (c2 == '-') { at += 1; }
+                let e: i64 = number_end(text, at, n);
+
+                add(out, i, e, Group::Number);     // AT&T's $5
+                i = e;
+                continue;
+            }
+            var e: i64 = i + 1;
+
+            if (c2 == '$') { e += 1; }
+            if (e >= n || !is_ident(text[e])) {
+                add(out, i, e, Group::Constant);   // NASM's $ and $$
+                i = e;
+                continue;
+            }
+        }
+        if (is_digit(c)) {
+            let j: i64 = number_end(text, i, n);
+
+            add(out, i, j, Group::Number);
+            i = j;
+            continue;
+        }
+        if (is_ident_start(c) || c == '.' || c == '@' || c == '?') {
+            let j: i64 = word_end(text, i, n);
+
+            if (j == i) {
+                i += 1;
+                continue;
+            }
+            let w: string = str::to_lower(str::substr(*text, i, j - i));
+            var k: i64 = j;
+
+            while (k < n && is_space(text[k])) { k += 1; }
+            // name: (label)
+            if (k < n && text[k] == ':' && (k + 1 >= n || text[k + 1] != ':') && words == 0) {
+                add(out, i, j, Group::Function);
+                add(out, k, k + 1, Group::Punct);
+                i = k + 1;
+                continue;
+            }
+            // name PROC, x DB 1, n EQU 4: the name, then the directive
+            if (op && words == 0 && k > j && k < n && is_ident_start(text[k])) {
+                let e: i64 = word_end(text, k, n);
+                let nx: string = str::to_lower(str::substr(*text, k, e - k));
+
+                if (NAMING_WORDS.has(&nx)) {
+                    add(out, i, j, Group::Function);
+                    add(out, k, e, Group::Constant);
+                    op = false;
+                    words = 2;
+                    i = e;
+                    continue;
+                }
+            }
+            if (op) {
+                if (text[i] == '.' || (KEYWORD_WORDS.has(&w) && !SIZE_WORDS.has(&w))) {
+                    add(out, i, j, Group::Constant);   // a directive
+                } else {
+                    add(out, i, j, Group::Keyword);    // the instruction
+                }
+                op = PREFIX_WORDS.has(&w);
+            } else if (register(&w)) {
+                add(out, i, j, Group::Type);
+            } else if (SIZE_WORDS.has(&w)) {
+                add(out, i, j, Group::Keyword);
+            } else if (KEYWORD_WORDS.has(&w)) {
+                add(out, i, j, Group::Constant);
+            }
+            words += 1;
+            i = j;
+            continue;
+        }
+        if (c == '[' || c == ']' || c == '(' || c == ')' || c == '{' || c == '}') {
+            add(out, i, i + 1, Group::Punct);
+        } else if (c == '+' || c == '-' || c == '*' || c == '/' || c == '<' || c == '>' ||
+            c == '&' || c == '|' || c == '^' || c == '~' || c == '!' || c == '=') {
+            add(out, i, i + 1, Group::Operator);
+        }
+        i += 1;
+    }
+    return 0;
+}
