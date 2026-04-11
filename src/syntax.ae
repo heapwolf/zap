@@ -906,3 +906,98 @@ fn expect(lang: string, text: string, want: string, after: i64) -> bool {
     }
     return 0;
 }
+
+#test fn highlights_sexp() -> i32 {
+    // zap's own: a head, a string, :keywords, a number, a comment
+    if (!expect(
+        "sexp", "(set tabstop 4) ; four", "punct:( keyword:set number:4 punct:) comment:; four", 0
+    )) {
+        return 1;
+    }
+    if (!expect(
+        "sexp", "(theme \"ink\" :inherit \"paper\")",
+        "punct:( keyword:theme string:\"ink\" constant::inherit string:\"paper\" punct:)", 0
+    )) {
+        return 2;
+    }
+    // a definition's name; Scheme's (define (f x) ...) too
+    if (!expect(
+        "sexp", "(defun twice (x) (* 2 x))",
+        "punct:( keyword:defun function:twice punct:( punct:) punct:( keyword:* number:2 punct:) punct:)",
+        0
+    )) {
+        return 3;
+    }
+    if (!expect(
+        "sexp", "(define (f x) #t)",
+        "punct:( keyword:define punct:( function:f punct:) constant:#t punct:)", 0
+    )) {
+        return 4;
+    }
+    // Clojure: [ ] { }, quoting, characters, a datum commented out
+    if (!expect(
+        "sexp", "(defn f [a] '(b) #\\c #_ (gone) {:k nil})",
+        "punct:( keyword:defn function:f punct:[ punct:] operator:' punct:( keyword:b punct:) constant:#\\c comment:#_ (gone) punct:{ constant::k constant:nil punct:} punct:)",
+        0
+    )) {
+        return 5;
+    }
+    // a string spanning lines, with an escape; a nested block comment spanning lines
+    if (!expect(
+        "sexp", "(doc \"a \\\"b", "punct:( keyword:doc string:\"a  escape:\\\" string:b", 1
+    )) {
+        return 6;
+    }
+    let (got, st) = pieces("sexp", "c\" 3)", 1);
+
+    if (!str::eq(got, "string:c\" number:3 punct:)") || st != 0) {
+        return 7;
+    }
+    // only the list right after the name is parameters
+    if (!expect(
+        "sexp", "(defvar x 5 (f))",
+        "punct:( keyword:defvar function:x number:5 punct:( keyword:f punct:) punct:)", 0
+    )) {
+        return 10;
+    }
+    if (!expect("sexp", "#| a #| b |# c", "comment:#| a #| b |# c", 11)) {
+        return 8;
+    }
+    let (got2, st2) = pieces("sexp", "d |# 5", 11);
+
+    if (!str::eq(got2, "comment:d |# number:5") || st2 != 0) {
+        return 9;
+    }
+    return 0;
+}
+
+#test fn highlights_json() -> i32 {
+    if (!expect(
+        "json", "{\"name\": \"zap\", \"n\": -1.5e3, \"ok\": true, \"x\": null}",
+        "punct:{ function:\"name\" punct:: string:\"zap\" punct:, function:\"n\" punct:: number:-1.5e3 punct:, function:\"ok\" punct:: constant:true punct:, function:\"x\" punct:: constant:null punct:}",
+        0
+    )) {
+        return 1;
+    }
+    // escapes; an array's strings are values
+    if (!expect(
+        "json", "[\"a\\n\", \"\\u00e9\"]",
+        "punct:[ string:\"a escape:\\n string:\" punct:, string:\" escape:\\u00e9 string:\" punct:]",
+        0
+    )) {
+        return 2;
+    }
+    // JSONC comments spanning lines; JSON5 bare keys and '...'
+    if (!expect("json", "// a note", "comment:// a note", 0)) {
+        return 3;
+    }
+    if (!expect("json", "{ /* a", "punct:{ comment:/* a", 1)) {
+        return 4;
+    }
+    let (got, st) = pieces("json", "b */ k: 'v',", 1);
+
+    if (!str::eq(got, "comment:b */ function:k punct:: string:'v' punct:,") || st != 0) {
+        return 5;
+    }
+    return 0;
+}

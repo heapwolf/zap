@@ -1,0 +1,287 @@
+//! S-expressions: zap's config, data (.sexp, Clojure .edn), and Lisps
+//! (Common Lisp, Emacs Lisp, Scheme, Racket, Clojure, Fennel). A list's
+//! first word (its head) is a keyword; a name being defined (define,
+//! defun, defn, ...) is a function; :keywords, true false nil #t #f and
+//! characters (#\a) are constants; numbers; multi-line strings with
+//! escapes; ; comments, nested multi-line #| |# comments, and #_ and #;
+//! datum comments; ' ` , ,@ # ( [ { are punctuation.
+//!
+//! State: 0 code, 1 in a string, 10 + d in #| |# at depth d.
+
+import {
+    Hl, Group, add, is_digit, is_space, limit_to, Words, words
+} from "core.ae";
+
+/// defining heads: the word after one is a function name
+export let DEFINERS: string[] = [
+    "define", "define-syntax", "define-record-type", "define-values", "defun", "defmacro",
+    "defvar", "defparameter", "defconstant", "defgeneric", "defmethod", "defstruct", "defclass",
+    "defn", "defn-", "def", "defonce", "defprotocol", "defrecord", "deftype", "defmulti",
+    "defsubst", "defcustom", "defface", "defalias"
+];
+
+/// words that are always constants
+export let CONSTANTS: string[] = ["true", "false", "nil", "t", "#t", "#f", "#true", "#false"];
+
+// each, for lookup
+let DEFINER_WORDS: Words = words(&[std::copy(DEFINERS)]);
+let CONSTANT_WORDS: Words = words(&[std::copy(CONSTANTS)]);
+
+let IN_STRING: i64 = 1;
+let IN_BLOCK: i64 = 10;
+
+// does byte c end a word?
+fn delim(c: u8) -> bool {
+    return is_space(c) || c == '(' || c == ')' || c == '[' || c == ']' || c == '{' ||
+        c == '}' || c == '"' || c == ';';
+}
+
+// end of the string whose text starts at i (highlighted from start: its
+// opening quote, if on this line) -> (end, closed?), escapes highlighted
+fn string_rest(text: &string, start: i64, i: i64, n: i64, mut out: &Hl[]) -> (i64, bool) {
+    var j: i64 = i;
+    var from: i64 = start;
+
+    while (j < n) {
+        let c: u8 = text[j];
+
+        if (c == '\\') {
+            add(out, from, j, Group::String);
+            var e: i64 = j + 2;
+
+            if (e > n) { e = n; }
+            add(out, j, e, Group::Escape);
+            j = e;
+            from = j;
+            continue;
+        }
+        if (c == '"') {
+            add(out, from, j + 1, Group::String);
+            return (j + 1, true);
+        }
+        j += 1;
+    }
+    add(out, from, n, Group::String);
+    return (n, false);
+}
+
+// end of a #| |# comment from i at depth -> (end, remaining depth)
+fn block_rest(text: &string, i: i64, n: i64, depth: i64) -> (i64, i64) {
+    var j: i64 = i;
+    var d: i64 = depth;
+
+    while (j < n && d > 0) {
+        if (text[j] == '|' && j + 1 < n && text[j + 1] == '#') {
+            d -= 1;
+            j += 2;
+        } else if (text[j] == '#' && j + 1 < n && text[j + 1] == '|') {
+            d += 1;
+            j += 2;
+        } else {
+            j += 1;
+        }
+    }
+    return (j, d);
+}
+
+// end of the datum at i (a word, string, or bracketed list on this
+// line), for #_ and #;
+fn datum_end(text: &string, i: i64, n: i64) -> i64 {
+    var j: i64 = i;
+
+    while (j < n && is_space(text[j])) { j += 1; }
+    if (j >= n) {
+        return n;
+    }
+    let c: u8 = text[j];
+
+    if (c == '(' || c == '[' || c == '{') {
+        var depth: i64 = 0;
+
+        while (j < n) {
+            let b: u8 = text[j];
+
+            if (b == '"') {
+                j += 1;
+
+                while (j < n && text[j] != '"') {
+                    if (text[j] == '\\') { j += 1; }
+                    j += 1;
+                }
+            } else if (b == '(' || b == '[' || b == '{') {
+                depth += 1;
+            } else if (b == ')' || b == ']' || b == '}') {
+                depth -= 1;
+                if (depth == 0) {
+                    return j + 1;
+                }
+            }
+            j += 1;
+        }
+        return n;
+    }
+
+    while (j < n && !delim(text[j])) { j += 1; }
+    return j;
+}
+
+// is the word at i..j a number (12 -3 1.5 1/2 1e9 #x1F 0xff)?
+fn number(text: &string, i: i64, j: i64) -> bool {
+    var k: i64 = i;
+
+    if (text[k] == '#' && k + 1 < j) {
+        let r: u8 = text[k + 1];
+
+        return r == 'x' || r == 'X' || r == 'b' || r == 'B' || r == 'o' || r == 'O' ||
+            r == 'e' || r == 'i' || r == 'd';
+    }
+    if ((text[k] == '-' || text[k] == '+') && k + 1 < j) { k += 1; }
+    if (!is_digit(text[k])) {
+        return false;
+    }
+    return true;
+}
+
+/// lex bytes lo..hi of a s-expression line, from state -> next line's state
+export fn line(text: &string, lo: i64, hi: i64, state: i64, mut out: &Hl[]) -> i64 {
+    let n: i64 = limit_to(text, lo, hi);
+    var i: i64 = lo;
+
+    // continue what the previous line left open
+    if (state == IN_STRING) {
+        let (e, closed) = string_rest(text, i, i, n, out);
+
+        if (!closed) {
+            return IN_STRING;
+        }
+        i = e;
+    } else if (state > IN_BLOCK) {
+        let (e, d) = block_rest(text, i, n, state - IN_BLOCK);
+
+        add(out, i, e, Group::Comment);
+        if (d > 0) {
+            return IN_BLOCK + d;
+        }
+        i = e;
+    }
+    var head: bool = false;          // next word is a list head
+    var names: bool = false;         // next word is a definition's name
+    var head_names: bool = false;    // so is the next list's head ((define (f x) ...))
+    var params: bool = false;        // next list is a definition's parameters (no head)
+
+    while (i < n) {
+        let c: u8 = text[i];
+
+        if (c == ';') {
+            add(out, i, n, Group::Comment);
+            return 0;
+        }
+        if (c == '"') {
+            let (e, closed) = string_rest(text, i, i + 1, n, out);
+
+            if (!closed) {
+                return IN_STRING;
+            }
+            i = e;
+            head = false;
+            names = false;
+            params = false;
+            continue;
+        }
+        if (c == '#' && i + 1 < n) {
+            let d: u8 = text[i + 1];
+
+            if (d == '|') {
+                let (e, depth) = block_rest(text, i + 2, n, 1);
+
+                add(out, i, e, Group::Comment);
+                if (depth > 0) {
+                    return IN_BLOCK + depth;
+                }
+                i = e;
+                continue;
+            }
+            if (d == '_' || d == ';') {
+                // the next datum, commented out
+                let e: i64 = datum_end(text, i + 2, n);
+
+                add(out, i, e, Group::Comment);
+                i = e;
+                continue;
+            }
+            if (d == '\\') {
+                // a character: #\a #\space #\(
+                var e: i64 = i + 3;
+
+                if (e > n) { e = n; }
+
+                while (e < n && !delim(text[e])) { e += 1; }
+                add(out, i, e, Group::Constant);
+                i = e;
+                head = false;
+                continue;
+            }
+            if (d == '(' || d == '[' || d == '{' || d == '\'' || d == '`') {
+                // a vector, set, or syntax quote: the # is punctuation
+                add(out, i, i + 1, Group::Punct);
+                i += 1;
+                continue;
+            }
+        }
+        if (c == '(' || c == '[' || c == '{') {
+            add(out, i, i + 1, Group::Punct);
+            head = c == '(' && !params;
+            head_names = names && head;
+            names = false;
+            params = false;
+            i += 1;
+            continue;
+        }
+        if (c == ')' || c == ']' || c == '}') {
+            add(out, i, i + 1, Group::Punct);
+            head = false;
+            names = false;
+            i += 1;
+            continue;
+        }
+        if (c == '\'' || c == '`' || c == ',' || c == '@' || c == '^') {
+            // quote: what follows is data, not a call
+            add(out, i, i + 1, Group::Operator);
+            head = false;
+            i += 1;
+            continue;
+        }
+        if (is_space(c)) {
+            i += 1;
+            continue;
+        }
+        var j: i64 = i;
+
+        while (j < n && !delim(text[j])) { j += 1; }
+        // (only the list right after a definition's name is its parameters)
+        params = false;
+        if (CONSTANT_WORDS.kind_at(text, i, j) >= 0) {
+            add(out, i, j, Group::Constant);
+            names = false;
+        } else if (c == ':' && j > i + 1) {
+            add(out, i, j, Group::Constant);        // :keyword
+            names = false;
+        } else if (number(text, i, j)) {
+            add(out, i, j, Group::Number);
+            names = false;
+        } else if (head && head_names) {
+            add(out, i, j, Group::Function);
+        } else if (head) {
+            add(out, i, j, Group::Keyword);
+            names = DEFINER_WORDS.kind_at(text, i, j) >= 0;
+        } else if (names) {
+            add(out, i, j, Group::Function);
+            names = false;
+            params = true;
+        }
+        head = false;
+        head_names = false;
+        i = j;
+    }
+    return 0;
+}
