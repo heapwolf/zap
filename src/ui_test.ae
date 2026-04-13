@@ -1,0 +1,102 @@
+//! zap driven without a terminal: keys in, frames out (std/tui's headless
+//! UI). `aec test ui_test.ae`; ZAP_SHOW=1 prints the frames.
+
+import tui from "std/tui";
+import term from "std/term";
+import str from "std/string";
+import fs from "std/fs";
+import { Config, parse_keys, DEFAULTS } from "config.ae";
+import editor from "editor.ae";
+import { App, Mode } from "editor.ae";
+import view from "view.ae";
+import { Kind } from "symbols.ae";
+import { Group } from "syntax.ae";
+import sheetm from "sheet.ae";
+import process from "std/process";
+import state from "state.ae";
+
+// the key a token names
+fn key_of(t: string) -> tui::Key {
+    if (t.len > 2 && t[0] == '<' && t[t.len - 1] == '>') {
+        var inner: string = str::substr(t, 1, t.len - 2);
+        var spec: string = "";
+
+        while (inner.len > 2 && inner[1] == '-') {
+            let m: string = str::substr(inner, 0, 1);
+
+            if (str::eq(m, "C")) { spec = "\(spec)ctrl+"; }
+            if (str::eq(m, "M")) { spec = "\(spec)alt+"; }
+            if (str::eq(m, "S")) { spec = "\(spec)shift+"; }
+            inner = str::substr(inner, 2, inner.len - 2);
+        }
+        match (inner) {
+            "CR" => { inner = "enter"; },
+            "BS" => { inner = "backspace"; },
+            "Del" => { inner = "delete"; },
+            "lt" => { inner = "<"; },
+            _ => {}
+        }
+        return tui::key("\(spec)\(inner)");
+    }
+    return tui::key(t);
+}
+
+// type keys written as in a spec ("ihello<Esc>")
+fn type_keys(mut ui: &tui::Ui(App), mut a: &App, spec: string) -> void {
+    for (let t: string in parse_keys(spec, "<Space>")) {
+        a.prepare();
+        tui::frame(ui, a);
+        if (a.picking.len > 0) {
+            tui::handle(ui, a, &tui::Event::Key { key: key_of(t) });
+        } else {
+            a.key(&key_of(t));
+        }
+    }
+}
+
+fn shot(mut ui: &tui::Ui(App), mut a: &App) -> string {
+    a.prepare();
+    tui::frame(ui, a);
+    let t: string = ui.text();
+
+    if (process::env("ZAP_SHOW").len > 0) { print("\(t)----\n"); }
+    return t;
+}
+
+fn row(t: &string, y: i64) -> string {
+    let lines: string[] = str::split(*t, "\n");
+
+    if (y < lines.len) {
+        return lines[y];
+    }
+    return "";
+}
+
+fn setup(name: string) -> App {
+    let dir: string = fs::temp_dir();
+    let base: string = "\(dir)/zap-ui-\(name)";
+
+    state::ensure_dir("\(base)/notes");
+    fs::write_file(
+        "\(base)/notes/HOSTED.md",
+        "# Hosted Aela\n\nToday an Aela program owns its process.\nThis note is the design.\n\n## The rules\n\n1. **The host owns the loop.** see [FFI.md](../docs/FFI.md)\n"
+    );
+    fs::write_file("\(base)/README.md", "readme\n");
+    fs::write_file("\(base)/main.ae", "fn main() -> i32 {\n    return 0;\n}\n");
+    var c: Config = Config {};
+
+    c.read(DEFAULTS, "<defaults>");
+    c.read_builtin_themes();
+    var a: App = editor::app(c, base);
+
+    a.cols = 70;
+    a.rows = 12;
+    return a;
+}
+
+#test fn opens_and_paints() -> i32 {
+    var a: App = setup("paint");
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("notes/HOSTED.md");
+    let t: string = shot(mut &ui, mut &a);
