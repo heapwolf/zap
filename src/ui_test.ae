@@ -100,3 +100,112 @@ fn setup(name: string) -> App {
 
     a.edit("notes/HOSTED.md");
     let t: string = shot(mut &ui, mut &a);
+
+    // the tree's root and the editor's first line
+    if (!str::contains(row(&t, 0), "zap-ui-paint")) {
+        return 1;
+    }
+    if (!str::contains(row(&t, 0), "1 # Hosted Aela")) {
+        return 2;
+    }
+    // the status line is the last row: a message briefly replaces the file
+    // name (nothing moves), then the name returns
+    if (!str::contains(row(&t, 11), "NORMAL")) {
+        return 3;
+    }
+    if (!str::contains(row(&t, 11), "\"notes/HOSTED.md\"")) {
+        return 4;
+    }
+    a.msg_until = 1;
+    let after: string = shot(mut &ui, mut &a);
+
+    if (a.msg.len > 0 || !str::contains(row(&after, 11), " HOSTED.md")) {
+        return 5;
+    }
+    if (!str::contains(row(&after, 11), "NORMAL")) {
+        return 6;
+    }
+    // an error too; Esc dismisses it
+    a.fail_msg("E999: something went wrong");
+    let err: string = shot(mut &ui, mut &a);
+
+    if (!str::contains(row(&err, 11), "E999") || str::contains(row(&err, 11), "HOSTED.md")) {
+        return 7;
+    }
+    type_keys(mut &ui, mut &a, "<Esc>");
+    if (a.msg.len > 0) {
+        return 8;
+    }
+    return 0;
+}
+
+#test fn edits_and_saves() -> i32 {
+    var a: App = setup("edit");
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("main.ae");
+    type_keys(mut &ui, mut &a, "jA // done<Esc>");
+    if (!str::eq(a.b.text.get(1), "    return 0; // done")) {
+        return 1;
+    }
+    type_keys(mut &ui, mut &a, "ggdd");
+    if (!str::eq(a.b.text.get(0), "    return 0; // done") || a.b.text.count != 2) {
+        return 2;
+    }
+    type_keys(mut &ui, mut &a, "u");
+    if (a.b.text.count != 3) {
+        return 3;
+    }
+    type_keys(mut &ui, mut &a, "yyjp");
+    if (a.b.text.count != 4 || !str::eq(a.b.text.get(2), "fn main() -> i32 {")) {
+        return 4;
+    }
+    type_keys(mut &ui, mut &a, "u:w<CR>");
+    if (a.b.modified) {
+        return 5;
+    }
+    let saved: string = fs::read_file("\(a.cwd)/main.ae") ?? "";
+
+    if (!str::eq(saved, "fn main() -> i32 {\n    return 0; // done\n}\n")) {
+        return 6;
+    }
+    type_keys(mut &ui, mut &a, "ggwcwfun<Esc>");
+    if (!str::eq(a.b.text.get(0), "fn fun() -> i32 {")) {
+        return 7;
+    }
+    type_keys(mut &ui, mut &a, "0d$");
+    if (a.b.text.get(0).len != 0) {
+        return 8;
+    }
+    return 0;
+}
+
+#test fn searches_twice() -> i32 {
+    var a: App = setup("search");
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("notes/HOSTED.md");
+    type_keys(mut &ui, mut &a, "/the<CR>");
+    if (a.b.cy != 3) {
+        return 1;
+    }
+    // / then Enter: repeat the last search
+    type_keys(mut &ui, mut &a, "/<CR>");
+    if (a.b.cy != 5) {
+        return 2;
+    }
+    type_keys(mut &ui, mut &a, "n");
+    if (a.b.cy != 7) {
+        return 3;
+    }
+    let t: string = shot(mut &ui, mut &a);
+
+    if (!a.hl) {
+        return 4;
+    }
+    type_keys(mut &ui, mut &a, ":noh<CR>");
+    if (a.hl) {
+        return 5;
+    }
+    return 0;
+}
