@@ -209,3 +209,106 @@ fn setup(name: string) -> App {
     }
     return 0;
 }
+
+#test fn toggles_numbers_and_tree() -> i32 {
+    var a: App = setup("toggle");
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("notes/HOSTED.md");
+    type_keys(mut &ui, mut &a, ":set nonu<CR>");
+    let t: string = shot(mut &ui, mut &a);
+
+    if (a.cfg.number || str::contains(row(&t, 0), "1 #")) {
+        return 1;
+    }
+    type_keys(mut &ui, mut &a, ":set nu!<CR>");
+    if (!a.cfg.number) {
+        return 2;
+    }
+    type_keys(mut &ui, mut &a, "<C-t>");
+    let t2: string = shot(mut &ui, mut &a);
+
+    if (a.split.at != 0 || !str::starts_with(row(&t2, 0), "   1 # Hosted")) {
+        return 3;
+    }
+    type_keys(mut &ui, mut &a, "<C-t>");
+    if (a.split.at == 0) {
+        return 4;
+    }
+    return 0;
+}
+
+#test fn walks_the_tree() -> i32 {
+    var a: App = setup("tree");
+    var ui = tui::headless(70, 12, view::view);
+
+    shot(mut &ui, mut &a);
+    type_keys(mut &ui, mut &a, "<C-w>h");
+    if (!a.focus_tree) {
+        return 1;
+    }
+    // root, notes/, README.md, main.ae: notes is row 1
+    type_keys(mut &ui, mut &a, "j<CR>");
+    if (a.tree.rows.len != 5 || !a.tree.rows[1].open) {
+        return 2;
+    }
+    type_keys(mut &ui, mut &a, "j<CR>");
+    if (!str::ends_with(a.b.path, "HOSTED.md") || a.focus_tree) {
+        return 3;
+    }
+    type_keys(mut &ui, mut &a, "<C-w>hkh");
+    if (a.tree.rows[1].open) {
+        return 4;
+    }
+    type_keys(mut &ui, mut &a, ":ls<CR>");
+    if (a.panel.len != 1) {
+        return 5;
+    }
+    return 0;
+}
+
+#test fn tab_focuses_and_ctrl_n_buffers() -> i32 {
+    var a: App = setup("focus");
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("main.ae");
+    a.edit("notes/HOSTED.md");
+    shot(mut &ui, mut &a);
+    // Tab: the tree, then the editor again; Shift+Tab the other way
+    type_keys(mut &ui, mut &a, "<Tab>");
+    if (!a.focus_tree) {
+        return 1;
+    }
+    type_keys(mut &ui, mut &a, "<Tab>");
+    if (a.focus_tree) {
+        return 2;
+    }
+    type_keys(mut &ui, mut &a, "<S-Tab>");
+    if (!a.focus_tree) {
+        return 3;
+    }
+    type_keys(mut &ui, mut &a, "<S-Tab>");
+    if (a.focus_tree) {
+        return 4;
+    }
+    // a hidden tree: Tab shows it
+    type_keys(mut &ui, mut &a, "<C-t>");
+    if (a.split.at != 0) {
+        return 5;
+    }
+    type_keys(mut &ui, mut &a, "<Tab>");
+    if (!a.focus_tree || a.split.at == 0) {
+        return 6;
+    }
+    type_keys(mut &ui, mut &a, "<Tab>");
+    // Ctrl+n / Ctrl+p: the next buffer, the one before
+    type_keys(mut &ui, mut &a, "<C-p>");
+    if (!str::ends_with(a.b.path, "main.ae")) {
+        return 7;
+    }
+    type_keys(mut &ui, mut &a, "<C-n>");
+    if (!str::ends_with(a.b.path, "HOSTED.md")) {
+        return 8;
+    }
+    return 0;
+}
