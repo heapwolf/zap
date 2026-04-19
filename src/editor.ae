@@ -4344,6 +4344,59 @@ impl App {
                 if (let f = m.find(&l, at)) {
                     let (s, e) = f;
 
+                    out.add(str::substr(l, at, s - at));
+                    out.add(rep);
+                    count += 1;
+                    any = true;
+                    if (e > s) { at = e; } else {
+                        if (s < l.len) { out.add(str::substr(l, s, 1)); }
+                        at = s + 1;
+                    }
+                    if (!global) { break; }
+                } else {
+                    break;
+                }
+            }
+            if (any) {
+                if (at < l.len) { out.add(str::substr(l, at, l.len - at)); }
+                self.b.set_line(y, out.to_string());
+                changed += 1;
+            }
+        }
+        self.b.commit();
+        if (count == 0) {
+            self.fail_msg("E486: Pattern not found: \(pat)");
+            return;
+        }
+        self.say("\(count) substitutions on \(changed) lines");
+    }
+
+    // ---- pickers ------------------------------------------------------------------------
+
+    /// opens the palette on category kind (files, grep, symbols, buffers,
+    /// commands, themes; "": the last one)
+    export fn open_picker(mut self: &App, kind: string) -> void {
+        // (from insert mode: leave as Esc does; from a selection: end it)
+        if (self.mode == Mode::Insert) {
+            self.comp = [];
+            self.leave_insert();
+        }
+        if (self.mode == Mode::Visual) { self.end_visual(); }
+
+        for (let k: i64, let c: string in &CATEGORIES) {
+            if (str::eq_fold(c, kind) || (str::eq(kind, "find") && k == 0)) { self.cat = k; }
+        }
+        // (symbols re-requested each time the palette opens on them)
+        if (self.cat == 2) { self.symbols_asked = false; }
+        // (shows the last listing, if of this directory, while it is relisted in
+        // the background: the palette opens at once)
+        self.walk_start();
+        self.picking = "palette";
+        self.picker.reset();
+        self.grep_query = "";
+        self.load_category();
+    }
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
