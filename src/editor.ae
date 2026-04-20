@@ -4397,6 +4397,134 @@ impl App {
         self.load_category();
     }
 
+    /// switches the palette to the next (dir 1) or previous (-1) category; the
+    /// query stays
+    export fn next_category(mut self: &App, dir: i64) -> void {
+        let n: i64 = CATEGORIES.len;
+
+        self.cat = ((self.cat + dir) % n + n) % n;
+        self.grep_query = "";
+        self.load_category();
+    }
+
+    // loads the items of the palette's category
+    fn load_category(mut self: &App) -> void {
+        var items: string[] = [];
+        var values: string[] = [];
+        let cat: string = CATEGORIES[self.cat];
+
+        if (str::eq(cat, "Files")) {
+            items = std::copy(self.file_names);
+            values = std::copy(self.files);
+        } else if (str::eq(cat, "Grep")) {
+            self.start_grep();
+            return;
+        } else if (str::eq(cat, "Symbols")) {
+            if (!self.symbols_asked) {
+                self.symbols_asked = true;
+                if (let c = self.cfg.command("symbols")) {
+                    self.run_job(c);
+                } else {
+                    self.fail_msg("no symbols command (the aela add-in has one: aec outline)");
+                }
+            }
+            items = std::copy(self.symbols);
+            values = std::copy(self.symbol_at);
+        } else if (str::eq(cat, "Buffers")) {
+            for (let b: BufInfo in self.infos()) {
+                var mod: string = "";
+
+                if (b.modified) { mod = " +"; }
+                items.push("\(b.id): \(b.name)\(mod)");
+                values.push("b \(b.id)");
+            }
+        } else if (str::eq(cat, "Commands")) {
+            let names: string[] = [
+                "write", "quit", "buffers", "tree", "set number!", "nohlsearch", "reload", "config",
+                "defaults", "clist", "help", "addins", "trust", "stop"
+            ];
+
+            for (let nm: string in &names) {
+                items.push(nm);
+                values.push(nm);
+            }
+
+            for (let c: &self::&Command in &self.cfg.commands) {
+                if (self.cfg.disabled_addin(c.addin)) { continue; }
+                var doc: string = "";
+
+                if (c.doc.len > 0) { doc = ": \(c.doc)"; }
+                items.push("\(c.name)\(doc)");
+                values.push(c.name);
+            }
+        } else {
+            for (let t: string in self.theme_names()) {
+                var mark: string = "";
+
+                if (str::eq(t, self.cfg.theme)) { mark = "  (current)"; }
+                items.push("\(t)\(mark)");
+                values.push("theme \(t)");
+            }
+        }
+        self.pick_items = items;
+        self.pick_values = values;
+        self.pick_gen += 1;
+    }
+
+    // restarts the project search for the palette's current query
+    fn start_grep(mut self: &App) -> void {
+        self.grep_query = self.picker.text();
+        self.grep_at = 0;
+        self.pick_items = [];
+        self.pick_values = [];
+        self.pick_gen += 1;
+    }
+
+    // project search: reads a few more files
+    fn grep_step(mut self: &App) -> void {
+        let m: Matcher = matcher(self.grep_query, false, true, true);
+        var bytes: i64 = 0;
+
+        while (self.grep_at < self.files.len && bytes < 4194304 &&
+            self.pick_items.len < GREP_MAX) {
+            let p: string = self.files[self.grep_at];
+
+            self.grep_at += 1;
+            var size: i64 = 0;
+
+            match (fs::info(p)) {
+                i => { size = i.size; },
+                e: fs::NotFound => { continue; }, e2: fs::PermissionDenied => { continue; },
+                e3: fs::IoError => { continue; }
+            }
+            if (size > 2097152) { continue; }
+            bytes += size;
+            let text: string = fs::read_file(p) ?? "";
+            // (a NUL in the first 1000 bytes: not text)
+            var binary: bool = false;
+
+            for (let k: i64 in 0..text.len) {
+                if (k >= 1000) { break; }
+                if (text[k] == 0) {
+                    binary = true;
+                    break;
+                }
+            }
+            if (binary || m.find(&text, 0) == none) { continue; }
+            let name: string = short_name(self.cwd, p);
+
+            for (let n: i64, let l: string in str::lines(text)) {
+                if (m.find(&l, 0) == none) { continue; }
+                var shown: string = str::trim(l);
+
+                if (shown.len > 160) { shown = str::substr(shown, 0, 160); }
+                self.pick_items.push("\(name):\(n + 1): \(shown)");
+                self.pick_values.push("\(p):\(n + 1)");
+                if (self.pick_items.len >= GREP_MAX) { break; }
+            }
+        }
+    }
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
