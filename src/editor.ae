@@ -4525,6 +4525,102 @@ impl App {
         }
     }
 
+    // takes aec outline's output as the palette's symbols: "== file (n lines)",
+    // then "  line declaration   // its doc"
+    export fn take_symbols(mut self: &App, lines: &string[]) -> void {
+        self.index = symbols::parse(lines, self.cwd);
+        self.symbols = [];
+        self.symbol_at = [];
+        var file: string = "";
+
+        for (let l: string in lines) {
+            if (str::starts_with(l, "== ")) {
+                var f: string = str::substr(l, 3, l.len - 3);
+
+                if (let paren = str::rfind(f, " (")) { f = str::substr(f, 0, paren); }
+                if (!path::is_absolute(f)) { f = path::join(self.cwd, f); }
+                file = path::clean(f);
+                continue;
+            }
+            let t: string = str::trim(l);
+            let sp: i64 = str::find(t, " ") ?? -1;
+
+            if (sp <= 0 || file.len == 0) { continue; }
+            var line_no: i64 = 0;
+
+            match (str::parse_int(str::substr(t, 0, sp))) {
+                n => { line_no = n; },
+                e: str::BadInt => { continue; }
+            }
+            var decl: string = str::trim(str::substr(t, sp + 1, t.len - sp - 1));
+
+            if (let c = str::find(decl, "   //")) { decl = str::substr(decl, 0, c); }
+            if (let c = str::find(decl, " {")) { decl = str::substr(decl, 0, c); }
+            decl = str::trim_prefix(decl, "export ");
+            // (palette: only the project's own, not imports from elsewhere)
+            if (!path::is_within(self.cwd, file)) { continue; }
+            self.symbols.push("\(decl)  \(short_name(self.cwd, file)):\(line_no)");
+            self.symbol_at.push("\(file):\(line_no)");
+        }
+        if (self.picking.len > 0 && self.cat == 2) {
+            self.pick_items = std::copy(self.symbols);
+            self.pick_values = std::copy(self.symbol_at);
+            self.pick_gen += 1;
+        }
+    }
+
+    // ---- listing the project, in the background -----------------------------------------
+
+    // relists the project (keeping the files until done, if of this directory;
+    // else they fill in as found)
+    fn walk_start(mut self: &App) -> void {
+        let hidden: bool = self.cfg.tree_hidden;
+
+        self.walk_live = !str::eq(self.files_root, self.cwd) || self.files_hidden != hidden;
+        if (self.walk_live) {
+            self.files = [];
+            self.file_names = [];
+            self.files_root = self.cwd;
+            self.files_hidden = hidden;
+        }
+        self.walk_dirs = [];
+        self.walk_names = [];
+        self.walk_next = [];
+        self.walk_out = [];
+        self.walk_enter(self.cwd);
+        self.walking = true;
+    }
+
+    // enters directory d: its entries come next
+    fn walk_enter(mut self: &App, d: string) -> void {
+        let names: string[] = match (fs::list(d)) {
+            n => n,
+            e: fs::NotFound => [], e2: fs::PermissionDenied => [], e3: fs::NotADirectory => [],
+            e4: fs::IoError => []
+        };
+
+        self.walk_dirs.push(d);
+        self.walk_names.push(names);
+        self.walk_next.push(0);
+    }
+
+    // file p found
+    fn walk_found(mut self: &App, p: string) -> void {
+        if (!self.walk_live) {
+            self.walk_out.push(p);
+            return;
+        }
+        let name: string = short_name(self.cwd, p);
+
+        // (the Files category grows with it)
+        if (self.picking.len > 0 && self.cat == 0) {
+            self.pick_items.push(name);
+            self.pick_values.push(p);
+        }
+        self.files.push(p);
+        self.file_names.push(name);
+    }
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
