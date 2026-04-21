@@ -4621,6 +4621,150 @@ impl App {
         self.file_names.push(name);
     }
 
+    // lists for a few milliseconds: in order (a subdirectory's entries before
+    // its parent's later ones), skipping hidden directories (.git always) and
+    // node_modules, at most WALK_MAX files
+    fn walk_step(mut self: &App) -> void {
+        let t0: time::Instant = time::now();
+        var n: i64 = 0;
+
+        while (self.walk_dirs.len > 0) {
+            // (a stat can be slow: network or shared file systems)
+            n += 1;
+            if (n % 4 == 0 && t0.elapsed() > 6ms) {
+                return;
+            }
+            var found: i64 = self.walk_out.len;
+
+            if (self.walk_live) { found = self.files.len; }
+            if (found >= WALK_MAX) {
+                self.walk_dirs = [];
+                break;
+            }
+            let d: i64 = self.walk_dirs.len - 1;
+
+            if (self.walk_next[d] >= self.walk_names[d].len) {
+                self.walk_dirs.pop();
+                self.walk_names.pop();
+                self.walk_next.pop();
+                continue;
+            }
+            let nm: string = self.walk_names[d][self.walk_next[d]];
+
+            self.walk_next[d] += 1;
+            if (nm.len > 0 && nm[0] == '.' && (!self.files_hidden || str::eq(nm, ".git"))) {
+                continue;
+            }
+            if (str::eq(nm, "node_modules")) { continue; }
+            let p: string = path::join(self.walk_dirs[d], nm);
+            var is_dir: bool = false;
+
+            match (fs::info(p)) {
+                i => { is_dir = i.kind == fs::Kind::Dir; },
+                e: fs::NotFound => {}, e2: fs::PermissionDenied => {}, e3: fs::IoError => {}
+            }
+            if (is_dir) {
+                if (d + 1 <= WALK_DEPTH) { self.walk_enter(p); }
+            } else {
+                self.walk_found(p);
+            }
+        }
+        self.walk_names = [];
+        self.walk_next = [];
+        self.walking = false;
+        if (self.walk_live) {
+            return;
+        }
+        // relisted: what is shown changes only if the files did
+        var same: bool = self.files.len == self.walk_out.len;
+
+        for (let k: i64 in 0..self.walk_out.len) {
+            if (!same) { break; }
+            same = str::eq(self.files[k], self.walk_out[k]);
+        }
+        if (same) {
+            self.walk_out = [];
+            return;
+        }
+        self.files = std::take(mut &self.walk_out);
+        self.file_names = [];
+
+        for (let p: string in &self.files) { self.file_names.push(short_name(self.cwd, p)); }
+        if (self.picking.len > 0 && self.cat == 0) { self.load_category(); }
+        if (self.picking.len > 0 && self.cat == 1) { self.start_grep(); }
+    }
+
+    // ---- the palette's matches ------------------------------------------------------------
+
+    // items the query matches, as the picker shows them. Recomputed only when
+    // the query or items change (searching the last matches if the query only
+    // grew; only new items if the items only grew). Best first, except Grep (in
+    // file order); at most SHOWN_MAX
+    fn filter_picks(mut self: &App) -> void {
+        let q: string = self.picker.text();
+        var changed: bool = false;
+
+        if (self.match_gen != self.pick_gen || self.match_upto > self.pick_items.len) {
+            self.match_gen = self.pick_gen;
+            self.match_query = q;
+            self.match_at = [];
+            self.match_score = [];
+            self.match_upto = 0;
+            changed = true;
+        } else if (!str::eq(q, self.match_query)) {
+            if (self.match_query.len > 0 && str::starts_with(q, self.match_query)) {
+                var at: i64[] = [];
+                var score: i64[] = [];
+
+                for (let i: i64 in &self.match_at) {
+                    let sc: i64 = tui::fuzzy(&q, &self.pick_items[i]);
+
+                    if (sc >= 0) {
+                        at.push(i);
+                        score.push(sc);
+                    }
+                }
+                self.match_at = at;
+                self.match_score = score;
+            } else {
+                self.match_at = [];
+                self.match_score = [];
+                self.match_upto = 0;
+            }
+            self.match_query = q;
+            changed = true;
+        }
+
+        while (self.match_upto < self.pick_items.len) {
+            let sc: i64 = tui::fuzzy(&q, &self.pick_items[self.match_upto]);
+
+            if (sc >= 0) {
+                self.match_at.push(self.match_upto);
+                self.match_score.push(sc);
+            }
+            self.match_upto += 1;
+            changed = true;
+        }
+        if (!changed) {
+            return;
+        }
+        var order: i64[] = [];
+
+        if (q.len == 0 || self.cat == 1) {
+            order = std::copy(self.match_at);
+        } else {
+            order = best_first(&self.match_at, &self.match_score);
+        }
+        self.shown = [];
+        self.shown_at = [];
+
+        for (let i: i64 in &order) {
+            if (self.shown.len >= SHOWN_MAX) { break; }
+            self.shown.push(self.pick_items[i]);
+            self.shown_at.push(i);
+        }
+    }
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
