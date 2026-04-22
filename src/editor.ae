@@ -4765,6 +4765,66 @@ impl App {
         }
     }
 
+    /// chooses the palette's shown item i
+    export fn picked_shown(mut self: &App, i: i64) -> void {
+        if (i < 0 || i >= self.shown_at.len) {
+            self.picked(-1);
+            return;
+        }
+        self.picked(self.shown_at[i]);
+    }
+
+    /// chooses the palette's item i
+    export fn picked(mut self: &App, i: i64) -> void {
+        self.picking = "";
+        if (i < 0 || i >= self.pick_values.len) {
+            return;
+        }
+        let v: string = self.pick_values[i];
+        let cat: string = CATEGORIES[self.cat];
+
+        if (str::eq(cat, "Files")) {
+            self.edit(v);
+        } else if (str::eq(cat, "Grep") || str::eq(cat, "Symbols")) {
+            // path:line
+            let colon: i64 = str::rfind(v, ":") ?? -1;
+
+            if (colon > 0) {
+                let p: string = str::substr(v, 0, colon);
+                let n: string = str::substr(v, colon + 1, v.len - colon - 1);
+
+                if (self.edit(p)) { self.ex(n); }
+            }
+        } else {
+            self.ex(v);
+        }
+        self.after();
+    }
+
+    // ---- commands that run programs ----------------------------------------------------------
+
+    // runs event's hooks on file p
+    fn hooks(mut self: &App, event: string, p: string) -> void {
+        let base: string = path::base(p);
+        var run: string[] = [];
+
+        for (let h: &self::&cfgm::Hook in &self.cfg.hooks) {
+            if (!str::eq(h.event, event) || self.cfg.disabled_addin(h.addin)) { continue; }
+            match (path::matches(h.pattern, base)) {
+                yes => { if (yes) { run.push(h.command); } },
+                e: path::BadPath => {}
+            }
+        }
+
+        for (let c: string in &run) { self.ex(c); }
+    }
+
+    // a command's words with %, %:h, %:r, %:t, <cword> and <cwd> expanded
+    fn expand(mut self: &App, words: &string[]) -> string[] {
+        let p: string = self.b.path;
+        let w: string = self.b.word();
+        var out: string[] = [];
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
