@@ -577,3 +577,70 @@ export fn view(s: &App) -> Node(App) {
     kids.push(status(s));
     if (s.cmd_line_shown()) { kids.push(bottom(s)); }
     let main: Node(App) = tui::Column { children: kids, style: std::copy(s.look.normal) };
+
+    if (s.comp.len > 0 && s.mode == Mode::Insert && s.picking.len == 0) {
+        return tui::Stack { layers: [main, menu_of(s)] };
+    }
+    if (s.wild.len > 0 && s.mode == Mode::Command) {
+        return tui::Stack { layers: [main, WildMenu {
+            items: std::copy(s.wild), at: s.wild_at, x: 1 + tui::width(s.wild_head),
+            look: std::copy(s.look)
+        }] };
+    }
+    if (s.picking.len == 0) {
+        return main;
+    }
+    // the palette: categories (Tab, Shift+Tab), a search over the items
+    var tabs: tui::Span[] = [];
+    var on: tui::Style = std::copy(s.look.search);
+
+    on.bold = true;
+    var off: tui::Style = std::copy(s.look.dialog);
+
+    off.dim = true;
+
+    for (let k: i64, let c: string in editor::CATEGORIES) {
+        // (padded right with a no-break space: trailing spaces are not
+        // drawn, so the last tab's highlight would lose one)
+        let label: string = " \(c)\u{a0}";
+
+        if (k == s.cat) { tabs.push(tui::span(label, std::copy(on))); } else {
+            tabs.push(tui::span(label, std::copy(off)));
+        }
+        if (k + 1 < editor::CATEGORIES.len) { tabs.push(tui::plain(" ")); }
+    }
+    var hint: string = "Tab: category  Up/Down: choose  Enter: open  Esc: close";
+
+    if (s.cat == 1) {
+        hint = "\(s.pick_items.len) lines in \(s.grep_at) of \(s.files.len) files";
+        if (s.walking) { hint = "\(hint) (listing the project)"; }
+        if (s.grep_query.len < 2) { hint = "type at least two characters to search the project"; }
+    }
+    if (s.cat == 2 && s.pick_items.len == 0) { hint = "aec outline is reading the project..."; }
+    if (s.cat == 0 && s.walking) { hint = "listing the project... (\(s.files.len) files)"; }
+    var dim: tui::Style = std::copy(s.look.dialog);
+
+    dim.dim = true;
+    return tui::Stack { layers: [main, tui::Dialog {
+        title: "Palette", box_w: tui::percent(70), box_h: tui::percent(60),
+        border: tui::Border::Rounded, style: std::copy(s.look.dialog),
+        on_dismiss: fn(a) -> { a.picking = ""; },
+        keys: [
+            tui::bind("esc", fn(mut a: &App) -> { a.picking = ""; }),
+            tui::bind("tab", fn(mut a: &App) -> { a.next_category(1); }),
+            tui::bind("shift+tab", fn(mut a: &App) -> { a.next_category(-1); })
+        ],
+        child: tui::Column { children: [
+            tui::Text { spans: tabs, wrap: tui::Wrap::Clip, height: tui::fixed(1) },
+            tui::Text { text: hint, style: dim, wrap: tui::Wrap::Ellipsis, height: tui::fixed(1) },
+            tui::Picker {
+                state: std::copy(s.picker), items: std::copy(s.shown), prompt: "> ",
+                placeholder: "type to filter", focus: true, height: tui::fill(1),
+                in_order: true,
+                on_select: fn(a, i) -> { a.picked_shown(i); },
+                match_style: std::copy(s.look.search),
+                style: std::copy(s.look.dialog)
+            },
+        ] }
+    }] };
+}
