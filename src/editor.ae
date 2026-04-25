@@ -4919,3 +4919,58 @@ fn shell_words(s: string) -> string[] {
     if (has) { out.push(cur.to_string()); }
     return out;
 }
+
+// at, sorted by score, highest first (stable merge sort: ties keep order)
+fn best_first(at: &i64[], score: &i64[]) -> i64[] {
+    let n: i64 = at.len;
+    var idx: i64[] = [];
+
+    for (let k: i64 in 0..n) { idx.push(k); }
+    var tmp: i64[] = std::copy(idx);
+    var width: i64 = 1;
+
+    while (width < n) {
+        var lo: i64 = 0;
+
+        while (lo < n) {
+            var mid: i64 = lo + width;
+
+            if (mid > n) { mid = n; }
+            var hi: i64 = lo + 2 * width;
+
+            if (hi > n) { hi = n; }
+            var i: i64 = lo;
+            var j: i64 = mid;
+            var k: i64 = lo;
+
+            while (k < hi) {
+                if (i < mid && (j >= hi || score[idx[i]] >= score[idx[j]])) {
+                    tmp[k] = idx[i];
+                    i += 1;
+                } else {
+                    tmp[k] = idx[j];
+                    j += 1;
+                }
+                k += 1;
+            }
+            lo = hi;
+        }
+        let t: i64[] = idx;
+
+        idx = tmp;
+        tmp = t;
+        width *= 2;
+    }
+    var out: i64[] = [];
+
+    for (let k: i64 in &idx) { out.push(at[k]); }
+    return out;
+}
+
+/// what `:config` puts in a new init.zap
+let STARTER: string = """;; zap's configuration (read after the built-in defaults; :defaults shows them)
+;; :reload rereads this file.
+
+(set number true)
+(set tree-width 30)
+;; (set theme "ink")
