@@ -45,6 +45,26 @@ syntax, tree, config, buffer, and the whole editor, headless).
 * Started without a file, zap shows an intro, as nvim does (logo, version,
   hints). It goes away once you type or open something.
 
+## The palette (`<C-k>`)
+
+`<C-k>` opens it from normal, insert and visual mode and the tree (insert
+mode is exited as by `<Esc>`; on the command line `<C-k>` deletes to the
+end, as in readline). `<leader>p` opens it too (normal, visual, tree), for
+terminals or tmux setups that grab Ctrl-K. It is a picker with categories:
+`Tab` / `Shift+Tab` switch category, typing filters (fuzzy), `Up` / `Down`
+select, `Enter` opens, `Esc` closes. It reopens on the last category.
+
+| category | lists                                                                                       | also     |
+| -------- | ------------------------------------------------------------------------------------------- | -------- |
+| Files    | project files (the start directory; skips hidden directories and node_modules)              | `<leader>f` |
+| Grep     | lines in those files matching the query (smartcase), in order; searches in the background as you type, 4 MB per step | `<leader>/` |
+| Symbols  | project declarations, from the add-in command `symbols` (aela add-in: `aec outline <cwd>`)  | `<leader>s` |
+| Buffers  | open buffers                                                                                | `<leader>b` |
+| Commands | ex commands, and every add-in command with its `:doc`                                       |          |
+| Themes   | themes; Enter applies one                                                                   | `:themes` |
+
+`:palette NAME` opens it on a category.
+
 ## Keys
 
 | mode    | keys                                                                                                                       |
