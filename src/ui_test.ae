@@ -312,3 +312,97 @@ fn setup(name: string) -> App {
     }
     return 0;
 }
+
+    // (the last tab's highlight keeps its trailing space)
+    if (!str::contains(t, " Themes\u{a0}")) {
+        return 10;
+    }
+    type_keys(mut &ui, mut &a, "HOS");
+    if (a.shown.len != 1 || !str::contains(a.shown[0], "HOSTED.md")) {
+        return 11;
+    }
+    type_keys(mut &ui, mut &a, "<CR>");
+    if (a.picking.len > 0 || !str::ends_with(a.b.path, "notes/HOSTED.md")) {
+        return 3;
+    }
+    // Grep: Tab to it; the search runs in the background as the query grows
+    type_keys(mut &ui, mut &a, "<C-k><Tab>owns");
+    if (a.cat != 1) {
+        return 4;
+    }
+
+    while (a.has_work()) { a.background(); }
+    if (a.pick_items.len != 2) {                 // HOSTED.md:3 and :8
+        return 5;
+    }
+    type_keys(mut &ui, mut &a, "<Down><CR>");
+    if (a.b.cy != 7) {
+        return 6;
+    }
+    // reopens on the last category; Shift+Tab goes back, wrapping to
+    // Themes; Enter applies one
+    type_keys(mut &ui, mut &a, "<C-k><S-Tab><S-Tab>");
+    if (a.cat != 5) {
+        return 7;
+    }
+    type_keys(mut &ui, mut &a, "<BS><BS><BS><BS>ink<CR>");
+    if (!str::eq(a.cfg.theme, "ink")) {
+        return 8;
+    }
+    // Esc closes it
+    type_keys(mut &ui, mut &a, "<C-k><Esc>");
+    if (a.picking.len > 0) {
+        return 9;
+    }
+
+    // reopened: files as listed, while being relisted
+    while (a.has_work()) { a.background(); }
+    type_keys(mut &ui, mut &a, "<C-k><Tab>");
+    if (a.cat != 0 || a.pick_items.len != 3) {
+        return 12;
+    }
+    // <leader>p opens it too
+    type_keys(mut &ui, mut &a, "<Esc><Space>p");
+    if (a.picking.len == 0) {
+        return 13;
+    }
+    return 0;
+}
+
+#test fn splash_until_an_edit() -> i32 {
+    var a: App = setup("splash");
+
+    a.splash = true;
+    var ui = tui::headless(90, 30, view::view);
+    let t: string = shot(mut &ui, mut &a);
+
+    if (!str::contains(t, "ZAP v\(editor::VERSION)") || !str::contains(t, ":help<Enter>")) {
+        return 1;
+    }
+    if (!str::contains(t, "[No Name]")) {
+        return 2;
+    }
+    // hidden once something is typed, back after undo
+    type_keys(mut &ui, mut &a, "ihi<Esc>");
+    if (str::contains(shot(mut &ui, mut &a), "ZAP v")) {
+        return 3;
+    }
+    // opening a file hides it
+    type_keys(mut &ui, mut &a, "u:e main.ae<CR>");
+    if (str::contains(shot(mut &ui, mut &a), "ZAP v")) {
+        return 4;
+    }
+    // too short for the logo: text only
+    var small = tui::headless(90, 14, view::view);
+    var b: App = setup("splash2");
+
+    b.splash = true;
+    b.rows = 14;
+    b.cols = 90;
+    let t2: string = shot(mut &small, mut &b);
+
+    if (!str::contains(t2, "ZAP v") || str::contains(t2, "██")) {
+        return 5;
+    }
+    return 0;
+}
