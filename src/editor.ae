@@ -4825,6 +4825,109 @@ impl App {
         let w: string = self.b.word();
         var out: string[] = [];
 
+    /// handles the running command's output, or its end
+    export fn job_output(mut self: &App, r: JobRead) -> void {
+        if (self.jobs.len == 0) {
+            return;
+        }
+        if (!r.done) {
+            let j: &self::&Job = mut &self.jobs[0];
+
+            j.out.add(r.data);
+            return;
+        }
+        let j: Job = self.jobs.pop();
+        let out: string = j.out.to_string();
+        let c: Command = std::copy(j.cmd);
+        let took: i64 = j.started.elapsed() / 1ms;
+        var lines: string[] = str::split(out, "\n");
+
+        if (lines.len > 0 && lines[lines.len - 1].len == 0) { lines.pop(); }
+        var status: string = "done";
+
+        if (r.code != 0) { status = "exit \(r.code)"; }
+        var locs: Loc[] = [];
+
+        if (c.errors || str::eq(c.show, "jump")) { locs = self.parse_locs(&lines); }
+        if (c.errors) { self.set_diags(&locs, j.file); }
+        if (c.reload) {
+            if (str::eq(self.b.path, j.file) && !self.b.modified) { self.reload_current(); }
+
+            for (let i: i64 in 0..self.others.len) {
+                let o: &self::&Buf = mut &self.others[i];
+
+                if (str::eq(o.path, j.file) && !o.modified) {
+                    match (o.reload()) {
+                        v => {}, e: fs::NotFound => {}, e2: fs::PermissionDenied => {},
+                        e3: fs::IsADirectory => {}, e4: fs::IoError => {}
+                    }
+                }
+            }
+        }
+        let summary: string = "\(c.name): \(status) in \(took) ms";
+
+        match (c.show) {
+            "outline" => {
+                self.take_symbols(&lines);
+                if (self.index_quiet) {
+                    self.index_quiet = false;
+                } else {
+                    self.say("\(summary): \(self.symbols.len) declarations");
+                }
+            },
+            "buffer" => {
+                self.show_scratch("[\(c.name)]", out);
+                self.say(summary);
+            },
+            "jump" => {
+                if (locs.len > 0) {
+                    self.locs = locs;
+                    self.jump_loc(0);
+                } else if (lines.len > 0) {
+                    self.fail_msg("\(c.name): \(lines[0])");
+                } else {
+                    self.fail_msg("\(c.name): nothing found");
+                }
+            },
+            "quiet" => {
+                if (c.errors && locs.len > 0) {
+                    var noun: string = "problems";
+
+                    if (locs.len == 1) { noun = "problem"; }
+                    self.fail_msg(
+                        "\(c.name): \(locs.len) \(noun) (:clist, ]d) - \(locs[0].message)"
+                    );
+                } else if (r.code != 0) {
+                    self.fail_msg("\(summary): \(str::join(&lines, " "))");
+                } else {
+                    self.say("\(summary): ok");
+                }
+            },
+            _ => {
+                var tail: string[] = [];
+                var first: i64 = lines.len - 14;
+
+                if (first < 0) { first = 0; }
+
+                for (let i: i64 in first..lines.len) { tail.push(lines[i]); }
+                if (tail.len == 0) {
+                    self.say(summary);
+                } else {
+                    self.panel = tail;
+                    self.panel_title = summary;
+                }
+            }
+        }
+        if (self.queue.len > 0) {
+            let queued: string = self.queue[0];
+            var rest: string[] = [];
+
+            for (let k: i64 in 1..self.queue.len) { rest.push(self.queue[k]); }
+            self.queue = rest;
+            self.ex(queued);
+        }
+    }
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
