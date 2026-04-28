@@ -4928,6 +4928,115 @@ impl App {
         }
     }
 
+    // file:line[:col][: message] lines of a tool's output
+    fn parse_locs(mut self: &App, lines: &string[]) -> Loc[] {
+        var out: Loc[] = [];
+
+        for (let l: string in lines) {
+            let parts: string[] = str::split(l, ":");
+
+            if (parts.len < 2) { continue; }
+            var file: string = parts[0];
+
+            if (file.len == 0 || str::contains(file, " ")) { continue; }
+            var line_no: i64 = 0;
+
+            match (str::parse_int(str::trim(parts[1]))) {
+                n => { line_no = n; },
+                e: str::BadInt => { continue; }
+            }
+            var col: i64 = 1;
+            var msg_at: i64 = 2;
+
+            if (parts.len > 2) {
+                match (str::parse_int(str::trim(parts[2]))) {
+                    n => {
+                        col = n;
+                        msg_at = 3;
+                    },
+                    e: str::BadInt => {}
+                }
+            }
+            var rest: string[] = [];
+
+            for (let k: i64 in msg_at..parts.len) { rest.push(parts[k]); }
+            if (!path::is_absolute(file)) { file = path::join(self.cwd, file); }
+            out.push(Loc {
+                file: path::clean(file), line: line_no, col: col,
+                message: str::trim(str::join(&rest, ":"))
+            });
+        }
+        return out;
+    }
+
+    // sets a tool's locations as diagnostics of the buffers they name (the
+    // file it ran on is cleared if it has none now)
+    fn set_diags(mut self: &App, locs: &Loc[], ran_on: string) -> void {
+        self.locs = std::copy(*locs);
+        self.loc_at = -1;
+
+        for (let i: i64 in -1..self.others.len) {
+            var p: string = self.b.path;
+
+            if (i >= 0) { p = self.others[i].path; }
+            var ds: Diag[] = [];
+            var mine: bool = str::eq(p, ran_on);
+
+            for (let l: &locs::&Loc in locs) {
+                if (str::eq(l.file, p)) {
+                    ds.push(Diag { line: l.line - 1, col: l.col - 1, message: l.message });
+                    mine = true;
+                }
+            }
+            if (mine) {
+                if (i < 0) { self.b.diags = ds; } else { self.others[i].diags = ds; }
+            }
+        }
+    }
+
+    // jumps to location i of the last tool's output
+    fn jump_loc(mut self: &App, i: i64) -> void {
+        if (i < 0 || i >= self.locs.len) {
+            return;
+        }
+        self.loc_at = i;
+        let l: Loc = std::copy(self.locs[i]);
+
+        if (!self.edit(l.file)) {
+            return;
+        }
+        var y: i64 = l.line - 1;
+
+        if (y >= self.b.text.count) { y = self.b.text.count - 1; }
+        if (y < 0) { y = 0; }
+        let t: string = self.b.text.get(y);
+        var x: i64 = l.col - 1;
+
+        if (x > t.len) { x = t.len; }
+        if (x < 0) { x = 0; }
+        self.go(y, x, true);
+        self.say("(\(i + 1) of \(self.locs.len)) \(l.message)");
+    }
+
+    // ---- the mouse ---------------------------------------------------------------------
+
+    /// a click at (x, y) of the editor window
+    export fn click_edit(mut self: &App, x: i64, y: i64) -> void {
+        if (self.sheet_on()) {
+            return;
+        }
+        self.focus_tree = false;
+        if (self.mode == Mode::Command || self.mode == Mode::Search) { self.mode = Mode::Normal; }
+        var line: i64 = self.b.top + y;
+
+        if (line >= self.b.text.count) { line = self.b.text.count - 1; }
+        let l: string = self.b.text.get(line);
+        var col: i64 = x - self.gutter + self.b.left;
+
+        if (col < 0) { col = 0; }
+        self.go(line, byte_at(&l, col, self.b.tabstop), true);
+    }
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
