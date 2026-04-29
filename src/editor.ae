@@ -4825,6 +4825,83 @@ impl App {
         let w: string = self.b.word();
         var out: string[] = [];
 
+    // runs :! cmd itself if it can -> did it? Always cd and pwd (a shell's cd
+    // would change only its own directory); with no shell, also these, via
+    // std/fs: ls cat mkdir rm mv cp echo touch
+    fn builtin(mut self: &App, sh: string) -> bool {
+        let words: string[] = self.expand(&shell_words(sh));
+
+        if (words.len == 0) {
+            return false;
+        }
+        let name: string = words[0];
+        var args: string[] = [];
+
+        for (let k: i64 in 1..words.len) { args.push(words[k]); }
+        if (str::eq(name, "cd")) {
+            var to: string = "";
+
+            if (args.len > 0) { to = args[0]; }
+            self.change_dir(to);
+            return true;
+        }
+        if (str::eq(name, "pwd")) {
+            self.say(self.cwd);
+            return true;
+        }
+        if (self.has_shell()) {
+            return false;
+        }
+        var out: string[] = [];
+        var bad: string = "";
+
+        match (name) {
+            "ls" => {
+                if (args.len == 0) { args.push("."); }
+
+                for (let a: string in &args) {
+                    let d: string = self.resolve(a);
+
+                    if (args.len > 1) { out.push("\(a):"); }
+                    match (fs::list(d)) {
+                        names => {
+                            for (let nm: string in &names) {
+                                if (is_dir(path::join(d, nm))) {
+                                    out.push("\(nm)/");
+                                } else {
+                                    out.push(nm);
+                                }
+                            }
+                        },
+                        e: fs::NotFound => { bad = "ls: \(a): not found"; },
+                        e2: fs::PermissionDenied => { bad = "ls: \(a): not allowed"; },
+                        e3: fs::NotADirectory => { out.push(a); },
+                        e4: fs::IoError => { bad = "ls: \(a): cannot read"; }
+                    }
+                }
+            },
+            "cat" => {
+                for (let a: string in &args) {
+                    if (let t = fs::read_file(self.resolve(a))) {
+                        for (let l: string in str::lines(t)) { out.push(l); }
+                    } else {
+                        bad = "cat: \(a): cannot read";
+                    }
+                }
+            },
+            "echo" => { out.push(str::join(&args, " ")); },
+            "mkdir" => {
+                for (let a: string in &args) {
+                    if (str::eq(a, "-p")) { continue; }
+                    state::ensure_dir(self.resolve(a));
+                    if (!is_dir(self.resolve(a))) { bad = "mkdir: \(a): not made"; }
+                }
+            },
+            "touch" => {
+                for (let a: string in &args) {
+                    let p: string = self.resolve(a);
+                    var there: bool = false;
+
     /// handles the running command's output, or its end
     export fn job_output(mut self: &App, r: JobRead) -> void {
         if (self.jobs.len == 0) {
