@@ -4902,6 +4902,67 @@ impl App {
                     let p: string = self.resolve(a);
                     var there: bool = false;
 
+                    match (fs::info(p)) {
+                        i => { there = true; },
+                        e: fs::NotFound => {}, e2: fs::PermissionDenied => {}, e3: fs::IoError => {}
+                    }
+                    if (!there && !fs::write_file(p, "")) { bad = "touch: \(a): not made"; }
+                }
+            },
+            "rm" => {
+                for (let a: string in &args) {
+                    if (str::starts_with(a, "-")) { continue; }
+                    match (fs::remove(self.resolve(a))) {
+                        v => {},
+                        e: fs::NotFound => { bad = "rm: \(a): not found"; },
+                        e2: fs::PermissionDenied => { bad = "rm: \(a): not allowed"; },
+                        e3: fs::NotEmpty => { bad = "rm: \(a): a directory with files in it"; },
+                        e4: fs::IoError => { bad = "rm: \(a): cannot remove"; }
+                    }
+                }
+            },
+            "mv" | "cp" => {
+                if (args.len != 2) {
+                    bad = "\(name): two names: \(name) FROM TO";
+                } else {
+                    let from: string = self.resolve(args[0]);
+                    var to: string = self.resolve(args[1]);
+
+                    if (is_dir(to)) { to = path::join(to, path::base(from)); }
+                    var ok: bool = false;
+
+                    if (str::eq(name, "mv")) {
+                        match (fs::rename(from, to)) {
+                            v => { ok = true; },
+                            e: fs::NotFound => {}, e2: fs::PermissionDenied => {},
+                            e3: fs::IsADirectory => {}, e4: fs::NotEmpty => {},
+                            e5: fs::IoError => {}
+                        }
+                    } else if (let t = fs::read_file(from)) {
+                        ok = fs::write_file(to, t);
+                    }
+                    if (!ok) { bad = "\(name): \(args[0]) to \(args[1]): did not work"; }
+                }
+            },
+            _ => {
+                bad = "\(name): there is no shell here: :! has cd pwd ls cat mkdir rm mv cp echo touch";
+            }
+        }
+        if (bad.len > 0) {
+            self.fail_msg(bad);
+        } else if (out.len > 14) {
+            self.show_scratch("[! \(name)]", "\(str::join(&out, "\n"))\n");
+        } else if (out.len > 0) {
+            self.panel = out;
+            self.panel_title = "! \(sh)";
+        } else {
+            self.panel = [];
+            self.say("! \(sh): ok");
+        }
+        self.tree.refresh();
+        return true;
+    }
+
     /// handles the running command's output, or its end
     export fn job_output(mut self: &App, r: JobRead) -> void {
         if (self.jobs.len == 0) {
