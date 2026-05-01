@@ -4963,6 +4963,111 @@ impl App {
         return true;
     }
 
+    // a name typed at :! or :cd, as a path (@NAME/...: another program's space
+    // on AeOS; ~: home)
+    fn resolve(self: &App, a: string) -> string {
+        var p: string = a;
+
+        if (str::starts_with(p, "@")) { p = "/\(p)"; }
+        let home: string = process::env("HOME");
+
+        if (home.len > 0 && (str::eq(p, "~") || str::starts_with(p, "~/"))) {
+            p = "\(home)\(str::substr(p, 1, p.len - 1))";
+        }
+        if (!path::is_absolute(p)) { p = path::join(self.cwd, p); }
+        return path::clean(p);
+    }
+
+    /// :cd to: sets zap's directory (tree root, where commands run, what the
+    /// palette lists) to `to` ("": home, else /; "-": the previous one)
+    export fn change_dir(mut self: &App, to: string) -> void {
+        var p: string = "";
+
+        if (str::eq(to, "-")) {
+            if (self.prev_cwd.len == 0) {
+                self.fail_msg("cd: no directory before this one");
+                return;
+            }
+            p = self.prev_cwd;
+        } else if (to.len == 0) {
+            p = process::env("HOME");
+            if (p.len == 0) { p = "/"; }
+        } else {
+            p = self.resolve(to);
+        }
+        if (!is_dir(p)) {
+            self.fail_msg("cd: \(to): not a directory");
+            return;
+        }
+        if (!str::eq(p, self.cwd)) {
+            self.prev_cwd = self.cwd;
+            self.cwd = p;
+            self.tree = tree(p, self.tree.hidden);
+        }
+        self.say(self.cwd);
+    }
+
+    /// starts command c in the background (queued behind a running one)
+    export fn run_job(mut self: &App, c: Command) -> void {
+        if (self.jobs.len > 0) {
+            if (self.queue.len < 8) { self.queue.push(c.name); }
+            return;
+        }
+        if (c.save && self.b.modified && !self.b.scratch) {
+            // (written without hooks: a hook running this command would loop)
+            let (n, bad) = save_buf(mut &self.b, "", false, self.persist && self.cfg.undofile);
+
+            if (bad.len > 0) {
+                self.fail_msg(bad);
+                return;
+            }
+        }
+        let words: string[] = self.expand(&c.run);
+        // stderr merged into stdout, via a shell that only runs the words
+        var args: string[] = ["-c", "exec \"$0\" \"$@\" 2>&1"];
+
+        for (let w: string in &words) { args.push(w); }
+        let cmd: process::Command = process::Command {
+            program: "sh", args: args, cwd: self.cwd, stdin: process::Stdio::Null,
+            stdout: process::Stdio::Pipe, stderr: process::Stdio::Inherit
+        };
+
+        match (process::start(&cmd)) {
+            child => {
+                let name: string = c.name;
+                var j: Job = Job { name: name, cmd: c, file: self.b.path, started: time::now() };
+
+                j.child.push(child);
+                self.jobs.push(j);
+                if (!self.index_quiet) { self.say("\(name): running \(str::join(&words, " "))"); }
+            },
+            e: process::NotFound => { self.fail_msg("\(c.name): no sh"); },
+            e2: process::PermissionDenied => { self.fail_msg("\(c.name): sh cannot run"); },
+            e3: process::SpawnError => { self.fail_msg("\(c.name): it did not start"); }
+        }
+    }
+
+    /// is a command running?
+    export fn busy(self: &App) -> bool { return self.jobs.len > 0; }
+
+    /// stops the running command
+    export fn stop_job(mut self: &App) -> void {
+        if (self.jobs.len == 0) {
+            return;
+        }
+        let name: string = self.jobs[0].name;
+
+        {
+            let c: &self::&process::Child = mut &self.jobs[0].child[0];
+
+            c.kill_tree();
+            c.close();
+        }
+        self.jobs = [];
+        self.queue = [];
+        self.say("\(name): stopped");
+    }
+
     /// handles the running command's output, or its end
     export fn job_output(mut self: &App, r: JobRead) -> void {
         if (self.jobs.len == 0) {
