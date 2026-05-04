@@ -90,3 +90,42 @@ with "Applications in terminal may access clipboard" on).
 `(set clipboard false)` turns this off.
 
 The leader is `<Space>` (`(set leader "\\")` for Vim's).
+
+### Add-ins and the Aela tools
+
+Commands run programs in the background (the editor stays usable; the
+status line shows a spinner; `:stop` kills it). Arguments may contain `%`
+(the file), `%:h`, `%:r`, `%:t`, `<cword>`, `<cwd>`. With `:errors true`,
+`file:line:col: message` output lines become diagnostics: line numbers turn
+red, the status line counts them, `:cnext` / `:cprev` (`]d` / `[d`) step
+through them, `:clist` lists them. `:show` sets where output goes:
+`"panel"` (last lines, below the status line), `"buffer"`, `"jump"` (to the
+first location printed) or `"quiet"`.
+
+The built-in `aela` add-in uses `aec`:
+
+| command    | runs                                        | keys        |
+| ---------- | ------------------------------------------- | ----------- |
+| `:check`   | `aec % --check-only` (also after each save) | `<leader>c` |
+| `:build`   | `aec % -o %:r`                              |             |
+| `:run`     | build, then run; output in a buffer         | `<leader>r` |
+| `:test`    | `aec test %`                                | `<leader>t` |
+| `:fmt`     | `aec fmt %`, then reload the file           |             |
+| `:def`     | `aec query def % <cword>`: jump there       | `gd`        |
+| `:refs`    | `aec query refs % <cword>`                  | `gr`        |
+| `:explain` | `aec explain <cword>` (an error code)       | `K`         |
+| `:docs`    | `aec docs <cword>`                          |             |
+| `:outline` | `aec outline %`                             |             |
+| `:symbols` | `aec outline <cwd>`: the palette's Symbols  | `<leader>s` |
+
+`:addins` lists add-ins and their commands; the palette's Commands lists
+all commands. A command with `:show "outline"` fills the palette's Symbols
+with its output, in `aec outline` format (`== file`, then
+`line declaration`).
+
+`:! cmd` runs a shell command (output in the panel). `cd` and `pwd` are
+built in (also `:cd dir`, `:cd -`, `:pwd`): they set and show zap's
+directory, which is the tree root, where commands run, and what the palette
+lists. On AeOS, which has no `sh` (programs can't start others), `:!` runs
+zap's own `ls cat mkdir rm mv cp echo touch`, on `std/fs` (`@NAME/...`:
+another program's space).
