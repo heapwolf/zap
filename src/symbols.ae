@@ -107,3 +107,70 @@ fn body(s: &string) -> string {
     }
     return str::substr(*s, a + 1, b - a - 1);
 }
+
+/// index an outline's lines (relative paths: from cwd)
+export fn parse(lines: &string[], cwd: string) -> Index {
+    var x: Index = Index {};
+    var file: string = "";
+    var owner: string = "";
+
+    for (let l: string in lines) {
+        if (str::starts_with(l, "== ")) {
+            var f: string = str::substr(l, 3, l.len - 3);
+
+            if (let paren = str::rfind(f, " (")) { f = str::substr(f, 0, paren); }
+            if (!path::is_absolute(f)) { f = path::join(cwd, f); }
+            file = path::clean(f);
+            owner = "";
+            x.files.push(file);
+            continue;
+        }
+        if (file.len == 0) { continue; }
+        let t: string = str::trim(l);
+
+        if (str::starts_with(t, "imports: ")) {
+            for (let p: string in parts(&str::substr(t, 9, t.len - 9), ',')) {
+                take_import(mut &x, file, p);
+            }
+            continue;
+        }
+        // line number, then the declaration (two extra spaces: a method)
+        let sp: i64 = str::find(t, " ") ?? -1;
+
+        if (sp <= 0) { continue; }
+        var no: i64 = 0;
+
+        match (str::parse_int(str::substr(t, 0, sp))) {
+            n => { no = n; },
+            e: str::BadInt => { continue; }
+        }
+        let rest: string = str::substr(t, sp + 1, t.len - sp - 1);
+        let method: bool = str::starts_with(rest, "  ");
+        var decl: string = str::trim(rest);
+        var doc: string = "";
+
+        if (let c = str::find(decl, "   // ")) {
+            doc = str::trim(str::substr(decl, c + 6, decl.len - c - 6));
+            decl = str::trim(str::substr(decl, 0, c));
+        }
+        if (!method) { owner = ""; }
+        take_decl(mut &x, file, no, decl, doc, method, mut &owner);
+    }
+    return x;
+}
+
+// "std/string (str)" or "tui/text.ae { Span, span }"
+fn take_import(mut x: &Index, file: string, p: string) -> void {
+    if (let b = str::find(p, " {")) {
+        var names: string[] = [];
+
+        for (let n: string in parts(&body(&p), ',')) { names.push(n); }
+        x.imports.push(Import { file: file, target: str::substr(p, 0, b), names: names });
+        return;
+    }
+    if (let b = str::find(p, " (")) {
+        let alias: string = str::trim_suffix(str::substr(p, b + 2, p.len - b - 2), ")");
+
+        x.imports.push(Import { file: file, target: str::substr(p, 0, b), alias: alias });
+    }
+}
