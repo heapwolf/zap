@@ -1,0 +1,109 @@
+//! zap's declaration index, for completion: the output of `aec outline
+//! --deps` (the add-in command `symbols`), parsed into each declaration's
+//! name, kind, signature, location and first comment line; each file's
+//! imports; struct fields, enum variants and impl methods, with their owner.
+//!
+//! The index is by name only: `x.` offers every struct's fields and methods
+//! (zap has no types), `str::` the exports of the module str names.
+
+import str from "std/string";
+import path from "std/path";
+
+/// a declaration's kind (as the menu's icons and labels show it)
+export enum Kind {
+    Text,           // a word in a buffer
+    Function,
+    Method,
+    Field,
+    Struct,
+    Enum,
+    Variant,
+    Interface,
+    Constant,       // let
+    Variable,       // var
+    Failure,
+    Module,         // an import's name
+    Keyword,
+    Type,
+    Reexport        // export Name; (declared in the file it came from)
+}
+
+/// a declaration
+export struct Decl {
+    export name: string;
+    export kind: Kind;
+    export exported: bool;
+    export detail: string;      // signature, on one line
+    export owner: string;       // a method's or field's type, a variant's enum
+    export file: string;        // where (absolute), and its line (1-based)
+    export line: i64;
+    export doc: string = "";    // first line of the comment above it
+}
+
+/// an import: file imports target as alias, or the names in braces
+export struct Import {
+    export file: string;
+    export target: string;       // as written ("std/string", "buffer.ae")
+    export alias: string = "";   // "" for braces
+    export names: string[] = [];
+}
+
+/// what the index knows
+export struct Index {
+    export decls: Decl[] = [];
+    export imports: Import[] = [];
+    export files: string[] = [];  // files outlined (absolute)
+}
+
+// s without prefix p (s if it lacks it)
+fn after(s: &string, p: string) -> string {
+    if (str::starts_with(*s, p)) {
+        return str::substr(*s, p.len, s.len - p.len);
+    }
+    return *s;
+}
+
+// the name at the start of s (letters, digits, _)
+fn name_at(s: &string) -> string {
+    var e: i64 = 0;
+
+    while (e < s.len && ident(s[e])) { e += 1; }
+    return str::substr(*s, 0, e);
+}
+
+fn ident(c: u8) -> bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+// s split at sep (comma or semicolon) at depth 0
+fn parts(s: &string, sep: u8) -> string[] {
+    var out: string[] = [];
+    var depth: i64 = 0;
+    var start: i64 = 0;
+
+    for (let i: i64 in 0..s.len) {
+        let c: u8 = s[i];
+
+        if (c == '(' || c == '{' || c == '[') { depth += 1; }
+        if (c == ')' || c == '}' || c == ']') { depth -= 1; }
+        if (c == sep && depth == 0) {
+            out.push(str::trim(str::substr(*s, start, i - start)));
+            start = i + 1;
+        }
+    }
+    let last: string = str::trim(str::substr(*s, start, s.len - start));
+
+    if (last.len > 0) { out.push(last); }
+    return out;
+}
+
+// the text between the first { and last } of s ("": none)
+fn body(s: &string) -> string {
+    let a: i64 = str::find(*s, "{") ?? -1;
+    let b: i64 = str::rfind(*s, "}") ?? -1;
+
+    if (a < 0 || b <= a) {
+        return "";
+    }
+    return str::substr(*s, a + 1, b - a - 1);
+}
