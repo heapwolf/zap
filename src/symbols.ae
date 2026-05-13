@@ -174,3 +174,99 @@ fn take_import(mut x: &Index, file: string, p: string) -> void {
         x.imports.push(Import { file: file, target: str::substr(p, 0, b), alias: alias });
     }
 }
+
+fn take_decl(
+    mut x: &Index, file: string, no: i64, decl0: string, doc: string, method: bool,
+    mut owner: &string
+) -> void {
+    var d: string = decl0;
+    let exported: bool = str::starts_with(d, "export ");
+
+    d = after(&d, "export ");
+    if (str::starts_with(d, "impl ")) {
+        // impl Name(A) as Interface
+        *owner = name_at(&str::substr(d, 5, d.len - 5));
+        return;
+    }
+    var bare: string = d;
+
+    for (let q: string in ["async ", "pure ", "task ", "#inline ", "extern "]) {
+        bare = after(&bare, q);
+    }
+    var kind: Kind = Kind::Function;
+    var rest: string = "";
+
+    if (str::starts_with(bare, "fn ")) {
+        rest = str::substr(bare, 3, bare.len - 3);
+        if (method) { kind = Kind::Method; }
+    } else if (str::starts_with(bare, "struct ") || str::starts_with(bare, "packed struct ")) {
+        kind = Kind::Struct;
+        rest = after(&after(&bare, "packed "), "struct ");
+    } else if (str::starts_with(bare, "enum ")) {
+        kind = Kind::Enum;
+        rest = str::substr(bare, 5, bare.len - 5);
+    } else if (str::starts_with(bare, "failure ")) {
+        kind = Kind::Failure;
+        rest = str::substr(bare, 8, bare.len - 8);
+    } else if (str::starts_with(bare, "interface ")) {
+        kind = Kind::Interface;
+        rest = str::substr(bare, 10, bare.len - 10);
+    } else if (str::starts_with(bare, "let ")) {
+        kind = Kind::Constant;
+        rest = str::substr(bare, 4, bare.len - 4);
+    } else if (str::starts_with(bare, "var ")) {
+        kind = Kind::Variable;
+        rest = str::substr(bare, 4, bare.len - 4);
+    } else if (str::starts_with(bare, "type ")) {
+        kind = Kind::Type;
+        rest = str::substr(bare, 5, bare.len - 5);
+    } else if (exported && str::ends_with(bare, ";")) {
+        kind = Kind::Reexport;
+        rest = bare;
+    } else {
+        return;
+    }
+    let name: string = name_at(&rest);
+
+    if (name.len == 0) {
+        return;
+    }
+    // (struct or enum signature: up to its body)
+    var detail: string = decl0;
+
+    if (kind == Kind::Struct || kind == Kind::Enum || kind == Kind::Failure) {
+        if (let b = str::find(decl0, " {")) { detail = str::substr(decl0, 0, b); }
+    }
+    var own: string = "";
+
+    if (method) { own = *owner; }
+    x.decls.push(Decl {
+        name: name, kind: kind, exported: exported, detail: detail, owner: own, file: file,
+        line: no, doc: doc
+    });
+    // struct fields, enum variants
+    if (kind == Kind::Struct || kind == Kind::Failure) {
+        for (let f: string in parts(&body(&d), ';')) {
+            let fe: bool = str::starts_with(f, "export ");
+            let ft: string = after(&f, "export ");
+            let fname: string = name_at(&ft);
+
+            if (fname.len == 0) { continue; }
+            x.decls.push(Decl {
+                name: fname, kind: Kind::Field, exported: fe, detail: ft, owner: name, file: file,
+                line: no
+            });
+        }
+    }
+    if (kind == Kind::Enum) {
+        for (let v: string in parts(&body(&d), ',')) {
+            let vname: string = name_at(&v);
+
+            if (vname.len == 0) { continue; }
+            x.decls.push(Decl {
+                name: vname, kind: Kind::Variant, exported: exported, detail: "\(name)::\(v)",
+                owner: name, file: file, line: no
+            });
+        }
+    }
+}
