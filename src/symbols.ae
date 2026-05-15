@@ -270,3 +270,78 @@ fn take_decl(
         }
     }
 }
+
+impl Index {
+    /// the file that file's import of target (as written) resolves to ("": not outlined)
+    export fn resolve(self: &Index, file: string, target: string) -> string {
+        var want: string = target;
+
+        if (!str::ends_with(want, ".ae")) { want = "\(want).ae"; }
+        if (!str::starts_with(want, "std/") && !path::is_absolute(want)) {
+            let p: string = path::clean(path::join(path::dir(file), want));
+
+            for (let f: string in &self.files) {
+                if (str::eq(f, p)) {
+                    return f;
+                }
+            }
+            return "";
+        }
+        if (path::is_absolute(want)) {
+            return path::clean(want);
+        }
+
+        for (let f: string in &self.files) {
+            if (str::ends_with(f, "/\(want)")) {
+                return f;
+            }
+        }
+        return "";
+    }
+
+    /// the file that file imports as alias ("": none)
+    export fn module_of(self: &Index, file: string, alias: string) -> string {
+        for (let im: &self::&Import in &self.imports) {
+            if (str::eq(im.file, file) && str::eq(im.alias, alias)) {
+                return self.resolve(file, im.target);
+            }
+        }
+        return "";
+    }
+
+    /// the declaration (index; -1: none) that name, a re-export or brace
+    /// import in file, stands for
+    export fn origin(self: &Index, file: string, name: string, depth: i64) -> i64 {
+        if (depth > 6) {
+            return -1;
+        }
+
+        for (let k: i64, let d: &self::&Decl in &self.decls) {
+            if (str::eq(d.file, file) && str::eq(d.name, name) && d.kind != Kind::Reexport &&
+                d.kind != Kind::Field && d.kind != Kind::Variant && d.kind != Kind::Method) {
+                return k;
+            }
+        }
+
+        for (let im: &self::&Import in &self.imports) {
+            if (!str::eq(im.file, file)) { continue; }
+
+            for (let n: string in &im.names) {
+                if (str::eq(n, name)) {
+                    let f: string = self.resolve(file, im.target);
+
+                    if (f.len > 0) {
+                        return self.origin(f, name, depth + 1);
+                    }
+                }
+            }
+        }
+        return -1;
+    }
+}
+
+/// the comment above line no (1-based) of lines, comment marks stripped
+/// (empty: none)
+export fn doc_above(lines: &string[], no: i64) -> string[] {
+    var out: string[] = [];
+    var k: i64 = no - 2;
