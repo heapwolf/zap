@@ -345,3 +345,75 @@ impl Index {
 export fn doc_above(lines: &string[], no: i64) -> string[] {
     var out: string[] = [];
     var k: i64 = no - 2;
+
+    while (k >= 0 && k < lines.len) {
+        let t: string = str::trim(lines[k]);
+
+        if (str::starts_with(t, "#")) {
+            k -= 1;
+            continue;
+        }
+        if (!str::starts_with(t, "//")) { break; }
+        var c: string = str::substr(t, 2, t.len - 2);
+
+        if (str::starts_with(c, "/") || str::starts_with(c, "!")) {
+            c = str::substr(c, 1, c.len - 1);
+        }
+        if (str::starts_with(c, " ")) { c = str::substr(c, 1, c.len - 1); }
+        out.push(c);
+        k -= 1;
+    }
+    // (read upward: reverse into order)
+    var ordered: string[] = [];
+
+    while (out.len > 0) { ordered.push(out.pop()); }
+    return ordered;
+}
+
+#test fn reads_an_outline() -> i32 {
+    let text: string = """== /p/shop.ae (40 lines)
+     imports: std/string (str), tui/text.ae { Span, span }
+    3 export struct Item { export name: string; qty: i64; }   // an item
+    9 enum Size { Small, Large(n: i64) }
+   12 impl Item
+   14   export fn total(self: &Item) -> i64   // how many
+   20 export let MAX: i64
+   22 export Span;
+== /h/std/string.ae (900 lines)
+   10 export fn trim(s: string) -> string   // s without spaces
+== /p/tui/text.ae (50 lines)
+    4 export struct Span { export text: string; }   // some text
+""";
+    let x: Index = parse(&str::split(text, "\n"), "/p");
+    var names: string[] = [];
+
+    for (let d: &x::&Decl in &x.decls) { names.push("\(d.name):\(d.kind as i64):\(d.owner)"); }
+    let got: string = str::join(&names, " ");
+    let want: string = "Item:4: name:3:Item qty:3:Item Size:5: Small:6:Size Large:6:Size total:2:Item MAX:8: Span:14: trim:1: Span:4: text:3:Span";
+
+    if (!str::eq(got, want)) {
+        println(got);
+        return 1;
+    }
+    if (!str::eq(x.module_of("/p/shop.ae", "str"), "/h/std/string.ae")) {
+        return 2;
+    }
+    let o: i64 = x.origin("/p/shop.ae", "Span", 0);
+
+    if (o < 0 || !str::eq(x.decls[o].file, "/p/tui/text.ae")) {
+        return 3;
+    }
+    if (!x.decls[0].exported || !str::eq(x.decls[0].doc, "an item") ||
+        !str::eq(x.decls[0].detail, "export struct Item")) {
+        return 4;
+    }
+    let src: string[] = [
+        "// not this", "", "/// the first", "/// and second", "#inline", "fn f() {}"
+    ];
+    let doc: string[] = doc_above(&src, 6);
+
+    if (doc.len != 2 || !str::eq(doc[1], "and second")) {
+        return 5;
+    }
+    return 0;
+}
