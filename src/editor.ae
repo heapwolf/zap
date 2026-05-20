@@ -3358,6 +3358,122 @@ impl App {
         };
     }
 
+    // m::prefix: exports of module m (or variants of enum m)
+    fn qualified(mut self: &App, m: string, prefix: string) -> CompItem[] {
+        var out: CompItem[] = [];
+        let fold: bool = str::eq(str::to_lower(prefix), prefix);
+        let file: string = self.index.module_of(self.here(), m);
+
+        for (let k: i64, let d: &self::&Decl in &self.index.decls) {
+            if (out.len >= COMP_MAX * 4) { break; }
+            if (!starts_like(&d.name, &prefix, fold)) { continue; }
+            if (file.len > 0) {
+                if (!str::eq(d.file, file) || !d.exported || d.kind == Kind::Field ||
+                    d.kind == Kind::Variant || d.kind == Kind::Method) {
+                    continue;
+                }
+            } else if (d.kind != Kind::Variant || !str::eq(d.owner, m)) {
+                continue;
+            }
+            out.push(self.item_of(k));
+        }
+        sort_items(mut &out);
+        return out;
+    }
+
+    // .prefix: fields and methods of every struct (this file's first)
+    fn members(mut self: &App, prefix: string) -> CompItem[] {
+        var out: CompItem[] = [];
+        let fold: bool = str::eq(str::to_lower(prefix), prefix);
+        let here: string = self.here();
+
+        for (let pass: i64 in 0..2) {
+            for (let k: i64, let d: &self::&Decl in &self.index.decls) {
+                if (out.len >= COMP_MAX) { break; }
+                if (d.kind != Kind::Field && d.kind != Kind::Method) { continue; }
+                if ((pass == 0) != str::eq(d.file, here)) { continue; }
+                if (!starts_like(&d.name, &prefix, fold) || has_item(&out, &d.name)) { continue; }
+                out.push(self.item_of(k));
+            }
+        }
+        return out;
+    }
+
+    // a word: buffer words (nearest first; this file's or imported
+    // declarations marked as such), then this file's declarations, its
+    // imported names, its modules, the language's keywords
+    fn plain_items(mut self: &App, prefix: string, y: i64, a: i64) -> CompItem[] {
+        var out: CompItem[] = [];
+        let fold: bool = str::eq(str::to_lower(prefix), prefix);
+        let here: string = self.here();
+        // what is in scope here
+        var scope: i64[] = [];
+
+        for (let k: i64, let d: &self::&Decl in &self.index.decls) {
+            if (!str::eq(d.file, here) || d.kind == Kind::Field || d.kind == Kind::Variant ||
+                d.kind == Kind::Method || !starts_like(&d.name, &prefix, fold)) {
+                continue;
+            }
+            scope.push(k);
+        }
+        var mods: string[] = [];
+        var targets: string[] = [];
+
+        for (let im: &self::&symbols::Import in &self.index.imports) {
+            if (!str::eq(im.file, here)) { continue; }
+            if (im.alias.len > 0 && starts_like(&im.alias, &prefix, fold)) {
+                mods.push(im.alias);
+                targets.push(im.target);
+            }
+
+            for (let nm: string in &im.names) {
+                if (!starts_like(&nm, &prefix, fold)) { continue; }
+                let o: i64 = self.index.origin(here, nm, 0);
+
+                if (o >= 0) { scope.push(o); }
+            }
+        }
+        let kws: string[] = syntax::keywords(self.b.ft.syntax);
+
+        for (let w: string in self.words_like(prefix, y, a)) {
+            var item: CompItem = CompItem { word: w, kind: Kind::Text };
+
+            for (let k: i64 in &scope) {
+                if (str::eq(self.index.decls[k].name, w)) {
+                    item = self.item_of(k);
+                    break;
+                }
+            }
+
+            for (let kw: string in &kws) {
+                if (str::eq(kw, w)) { item.kind = Kind::Keyword; }
+            }
+
+            for (let md: string in &mods) {
+                if (str::eq(md, w)) { item.kind = Kind::Module; }
+            }
+            out.push(item);
+        }
+
+        for (let k: i64 in &scope) {
+            if (out.len >= COMP_MAX) { break; }
+            if (!has_item(&out, &self.index.decls[k].name)) { out.push(self.item_of(k)); }
+        }
+
+        for (let i: i64, let md: string in &mods) {
+            if (!has_item(&out, &md)) {
+                out.push(CompItem { word: md, kind: Kind::Module, owner: targets[i] });
+            }
+        }
+
+        for (let kw: string in &kws) {
+            if (kw.len > prefix.len && starts_like(&kw, &prefix, fold) && !has_item(&out, &kw)) {
+                out.push(CompItem { word: kw, kind: Kind::Keyword });
+            }
+        }
+        return out;
+    }
+
     fn insert_edit(mut self: &App, t: &string, k: &tui::Key) -> void {
         self.b.begin();
         match (*t) {
