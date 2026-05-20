@@ -3258,6 +3258,106 @@ impl App {
         }
     }
 
+    // opens the menu for the word before the cursor (asked: by Ctrl+n or
+    // Ctrl+p, from one character; back: choose the last)
+    fn complete_word(mut self: &App, asked: bool, back: bool) -> void {
+        self.comp = [];
+        let y: i64 = self.b.cy;
+        let l: string = self.b.text.get(y);
+        let x: i64 = self.b.cx;
+        var a: i64 = x;
+
+        while (a > 0 && wordy(l[a - 1])) { a -= 1; }
+        let prefix: string = str::substr(l, a, x - a);
+        // what precedes it: a module or enum name and ::, or a .
+        var qual: string = "";
+        var member: bool = false;
+
+        if (a >= 3 && l[a - 1] == ':' && l[a - 2] == ':' && wordy(l[a - 3])) {
+            var q: i64 = a - 2;
+
+            while (q > 0 && wordy(l[q - 1])) { q -= 1; }
+            qual = str::substr(l, q, a - 2 - q);
+        } else if (a >= 2 && l[a - 1] == '.' &&
+            (wordy(l[a - 2]) || l[a - 2] == ')' || l[a - 2] == ']')) {
+            member = true;
+        }
+        var least: i64 = 2;
+
+        if (asked || member) { least = 1; }
+        if (qual.len > 0) { least = 0; }
+        // (not mid-word, nor in a number)
+        if (prefix.len < least || (x < l.len && wordy(l[x])) ||
+            (prefix.len > 0 && l[a] >= '0' && l[a] <= '9')) {
+            return;
+        }
+        let aela: bool = str::eq(self.b.ft.syntax, "aela");
+
+        if (aela) { self.want_index(); }
+        var items: CompItem[] = [];
+
+        if (qual.len > 0) {
+            items = self.qualified(qual, prefix);
+        } else if (member) {
+            items = self.members(prefix);
+        } else {
+            items = self.plain_items(prefix, y, a);
+        }
+        if (items.len == 0) {
+            if (asked) { self.say("no completions for \(prefix)"); }
+            return;
+        }
+        self.comp = items;
+        self.comp_at = 0;
+        self.comp_prefix = prefix;
+        self.comp_y = y;
+        self.comp_x = a;
+        if (back) { self.comp_move(-1); } else { self.comp_move(0); }
+    }
+
+    // rereads the index in the background if a file was written since
+    fn want_index(mut self: &App) -> void {
+        if (!self.index_stale || self.jobs.len > 0) {
+            return;
+        }
+        if (let c = self.cfg.command("symbols")) {
+            self.index_stale = false;
+            self.index_quiet = true;
+            self.run_job(c);
+        }
+    }
+
+    // current file, as the index names it
+    fn here(self: &App) -> string { return path::clean(self.b.path); }
+
+    // completion for index declaration k (a re-export: what it stands for)
+    fn item_of(self: &App, k: i64) -> CompItem {
+        let d: &self::&Decl = &self.index.decls[k];
+
+        if (d.kind == Kind::Reexport) {
+            let o: i64 = self.index.origin(d.file, d.name, 0);
+
+            if (o >= 0) {
+                let od: &self::&Decl = &self.index.decls[o];
+
+                return CompItem {
+                    word: d.name,
+                    kind: od.kind,
+                    exported: true,
+                    owner: od.owner,
+                    decl: o
+                };
+            }
+        }
+        return CompItem {
+            word: d.name,
+            kind: d.kind,
+            exported: d.exported,
+            owner: d.owner,
+            decl: k
+        };
+    }
+
     fn insert_edit(mut self: &App, t: &string, k: &tui::Key) -> void {
         self.b.begin();
         match (*t) {
