@@ -3144,6 +3144,120 @@ impl App {
         return (line, byte_at(&l, col, self.b.tabstop));
     }
 
+    // inserts text at the cursor
+    export fn insert_text(mut self: &App, text: string) -> void {
+        self.b.begin();
+        let end: (i64, i64) = self.b.put(self.b.cy, self.b.cx, text);
+
+        self.b.cy = end.0;
+        self.b.cx = end.1;
+        let l: string = self.b.text.get(self.b.cy);
+
+        self.b.want = col_of(&l, self.b.cx, self.b.tabstop);
+    }
+
+    // handles a key in insert mode
+    fn insert_key(mut self: &App, t: &string, k: &tui::Key) -> void {
+        // completion menu takes its keys first
+        if (self.comp.len > 0 && self.comp_key(t)) {
+            return;
+        }
+        let typing: bool = k.typed() != none || str::eq(*t, "<BS>") || str::eq(*t, "<C-h>");
+        let asked: bool = self.comp.len == 0 &&
+            (str::eq(*t, "<C-n>") || str::eq(*t, "<C-p>") || str::eq(*t, "<C-Space>"));
+
+        self.insert_edit(t, k);
+        if (self.mode == Mode::Insert && (asked || (typing && self.cfg.autocomplete))) {
+            self.complete_word(asked, str::eq(*t, "<C-p>"));
+        } else {
+            self.comp = [];
+        }
+    }
+
+    // a completion menu key -> did it take it?
+    fn comp_key(mut self: &App, t: &string) -> bool {
+        match (*t) {
+            "<C-n>" | "<Tab>" | "<Down>" => {
+                self.comp_move(1);
+                return true;
+            },
+            "<C-p>" | "<S-Tab>" | "<Up>" => {
+                self.comp_move(-1);
+                return true;
+            },
+            "<CR>" | "<C-y>" => {
+                self.comp_take();
+                return true;
+            },
+            "<C-e>" => {
+                self.comp = [];
+                return true;
+            },
+            _ => {}
+        }
+        return false;
+    }
+
+    // replaces the typed word with the chosen completion
+    fn comp_take(mut self: &App) -> void {
+        let y: i64 = self.comp_y;
+        let x: i64 = self.comp_x;
+        let w: string = self.comp[self.comp_at].word;
+
+        self.comp = [];
+        if (y != self.b.cy || self.b.cx < x) {
+            return;
+        }
+        let l: string = self.b.text.get(y);
+
+        self.b.set_line(
+            y, "\(str::substr(l, 0, x))\(w)\(str::substr(l, self.b.cx, l.len - self.b.cx))"
+        );
+        self.b.cx = x + w.len;
+        let nl: string = self.b.text.get(y);
+
+        self.b.want = col_of(&nl, self.b.cx, self.b.tabstop);
+    }
+
+    // moves the menu's choice by d (wrapping); reads its comment
+    fn comp_move(mut self: &App, d: i64) -> void {
+        let n: i64 = self.comp.len;
+
+        if (n == 0) {
+            return;
+        }
+        self.comp_at = ((self.comp_at + d) % n + n) % n;
+        self.comp_doc = [];
+        let k: i64 = self.comp[self.comp_at].decl;
+
+        if (k < 0) {
+            return;
+        }
+        let file: string = self.index.decls[k].file;
+        let no: i64 = self.index.decls[k].line;
+        // (from the file's buffer if open, else the file)
+        var lines: string[] = [];
+        var open: bool = false;
+
+        if (str::eq(self.b.path, file)) {
+            open = true;
+            var lo: i64 = no - 40;
+
+            if (lo < 0) { lo = 0; }
+
+            for (let i: i64 in 0..lo) { lines.push(""); }
+
+            for (let i: i64 in lo..no) {
+                if (i < self.b.text.count) { lines.push(self.b.text.get(i)); }
+            }
+        }
+        if (!open) { lines = str::split(fs::read_file(file) ?? "", "\n"); }
+        self.comp_doc = symbols::doc_above(&lines, no);
+        if (self.comp_doc.len == 0 && self.index.decls[k].doc.len > 0) {
+            self.comp_doc.push(self.index.decls[k].doc);
+        }
+    }
+
     fn insert_edit(mut self: &App, t: &string, k: &tui::Key) -> void {
         self.b.begin();
         match (*t) {
