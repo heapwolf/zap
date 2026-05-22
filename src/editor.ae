@@ -3474,6 +3474,63 @@ impl App {
         return out;
     }
 
+    // words starting with prefix (ignoring case unless it has a capital):
+    // nearest lines to y first (skipping the word typed at byte a), then other
+    // buffers' around their cursors; at most COMP_MAX
+    fn words_like(mut self: &App, prefix: string, y: i64, a: i64) -> string[] {
+        var out: string[] = [];
+        let fold: bool = str::eq(str::to_lower(prefix), prefix);
+        let low: string = str::to_lower(prefix);
+        let n: i64 = self.b.text.count;
+        var d: i64 = 0;
+
+        while (d <= COMP_LINES && out.len < COMP_MAX) {
+            if (y - d >= 0) {
+                let l: string = self.b.text.get(y - d);
+                var skip: i64 = -1;
+
+                if (d == 0) { skip = a; }
+                words_in(&l, &prefix, &low, fold, skip, mut &out);
+            }
+            if (d > 0 && y + d < n) {
+                let l: string = self.b.text.get(y + d);
+
+                words_in(&l, &prefix, &low, fold, -1, mut &out);
+            }
+            if (y - d < 0 && y + d >= n) { break; }
+            d += 1;
+        }
+
+        for (let i: i64 in 0..self.others.len) {
+            if (out.len >= COMP_MAX) { break; }
+            let o: &self::&Buf = mut &self.others[i];
+            var lo: i64 = o.cy - 300;
+
+            if (lo < 0) { lo = 0; }
+            var hi: i64 = o.cy + 300;
+
+            if (hi > o.text.count) { hi = o.text.count; }
+
+            for (let k: i64 in lo..hi) {
+                let l: string = o.text.get(k);
+
+                words_in(&l, &prefix, &low, fold, -1, mut &out);
+            }
+        }
+        return out;
+    }
+
+    // leaves insert mode as Esc does: fills a block's other lines, ends the
+    // change, puts the cursor back on the last typed character
+    fn leave_insert(mut self: &App) -> void {
+        if (self.blk.len == 5) { self.block_fill(); }
+        self.b.commit();
+        self.mode = Mode::Normal;
+        let l: string = self.b.text.get(self.b.cy);
+
+        if (self.b.cx > 0) { self.b.cx = prev_char(&l, self.b.cx); }
+    }
+
     fn insert_edit(mut self: &App, t: &string, k: &tui::Key) -> void {
         self.b.begin();
         match (*t) {
