@@ -517,6 +517,103 @@ export struct MenuRow {
     export label: string;
 }
 
+/// insert mode's completions, in a menu below the typed word (above it if no
+/// room): x, y is its first cell on screen; the chosen one's docs are in a
+/// box beside it
+export struct PopMenu(A) {
+    export rows: MenuRow[];
+    export at: i64;
+    export typed: i64;              // characters typed (marked in each word)
+    export x: i64;
+    export y: i64;
+    export bottom: i64;             // first row it must not cover (the status line)
+    export title: string;           // the chosen one's signature ("": no box)
+    export doc: string[];
+    export place: string;           // where it is declared
+    export look: Look;
+}
+
+impl PopMenu(A) as Node(A) {
+    export fn measure(self: &PopMenu(A), avail: i64) -> Size { return Size { w: 0, h: 0 }; }
+
+    export fn sizing(self: &PopMenu(A)) -> Sizing {
+        return Sizing { w: tui::fill(1), h: tui::fill(1) };
+    }
+
+    export fn render(self: &PopMenu(A), mut f: &Frame(A), area: Rect) -> void {
+        let n: i64 = self.rows.len;
+        var h: i64 = n;
+
+        if (h > 10) { h = 10; }
+        var y0: i64 = area.y + self.y + 1;
+        let below: i64 = area.y + self.bottom - y0;
+        let above: i64 = self.y;
+
+        if (h > below) {
+            if (above > below) {
+                if (h > above) { h = above; }
+                y0 = area.y + self.y - h;
+            } else {
+                h = below;
+            }
+        }
+        if (h < 1) {
+            return;
+        }
+        // the columns: icon, word, label
+        var ww: i64 = 0;
+        var lw: i64 = 0;
+
+        for (let r: &self::&MenuRow in &self.rows) {
+            let a: i64 = tui::width(r.word);
+
+            if (a > ww) { ww = a; }
+            let b: i64 = tui::width(r.label);
+
+            if (b > lw) { lw = b; }
+        }
+        if (ww > 40) { ww = 40; }
+        if (lw > 24) { lw = 24; }
+        var w: i64 = 4 + ww + 2 + lw + 1;
+
+        if (w > area.w) { w = area.w; }
+        // (each word aligned under the typed word, the icon to its left)
+        var x: i64 = area.x + self.x - 3;
+
+        if (x + w > area.x + area.w) { x = area.x + area.w - w; }
+        if (x < area.x) { x = area.x; }
+        var first: i64 = 0;
+
+        if (self.at >= h) { first = self.at - h + 1; }
+
+        for (let k: i64 in 0..h) {
+            let i: i64 = first + k;
+            let r: &self::&MenuRow = &self.rows[i];
+            var st: tui::Style = std::copy(self.look.menu);
+
+            if (i == self.at) { st = std::copy(self.look.menu_selected); }
+            let row: i64 = y0 + k;
+
+            f.fill(Rect { x: x, y: row, w: w, h: 1 }, &st);
+            var ist: tui::Style = tui::merge(&st, &self.look.menu_kind);
+
+            if (r.group >= 0 && r.group < self.look.syn.len) {
+                let g: &self::&tui::Style = &self.look.syn[r.group];
+
+                ist.fg = std::copy(g.fg);
+            }
+            f.text(x + 1, row, r.icon, &ist, 2);
+            // the word, its typed part marked
+            let typed: i64 = self.typed;
+            var cut: i64 = typed;
+
+            if (cut > r.word.len) { cut = r.word.len; }
+            let mst: tui::Style = tui::merge(&st, &self.look.menu_match);
+            let used: i64 = f.text(x + 3, row, str::substr(r.word, 0, cut), &mst, ww);
+
+            f.text(x + 3 + used, row, str::substr(r.word, cut, r.word.len - cut), &st, ww - used);
+            var lst: tui::Style = std::copy(st);
+
 // ---- the whole screen ----------------------------------------------------------------
 
 /// app's frame: paints what prepare read
