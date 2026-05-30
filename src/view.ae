@@ -711,6 +711,126 @@ impl PopMenu(A) as Node(A) {
     }
 }
 
+// wraps s into lines of at most w cells, at spaces
+fn wrap(s: &string, w: i64) -> string[] {
+    var out: string[] = [];
+    var line: string = "";
+
+    for (let word: string in str::split(*s, " ")) {
+        if (line.len == 0) {
+            line = word;
+        } else if (tui::width(line) + 1 + tui::width(word) <= w) {
+            line = "\(line) \(word)";
+        } else {
+            out.push(line);
+            line = word;
+        }
+
+        while (tui::width(line) > w && w > 0) {
+            out.push(tui::truncate(line, w));
+            line = str::substr(
+                line, tui::truncate(line, w).len, line.len - tui::truncate(line, w).len
+            );
+        }
+    }
+    if (line.len > 0 || out.len == 0) { out.push(line); }
+    return out;
+}
+
+// a kind's icon (icons: a Nerd Font codicon, else a letter), syntax group
+// color, and name
+fn kind_icon(k: Kind, icons: bool) -> (string, i64, string) {
+    match (k) {
+        Kind::Function => { return (pick(icons, "", "f"), 6, "fn"); },
+        Kind::Method => { return (pick(icons, "", "m"), 6, "method"); },
+        Kind::Field => { return (pick(icons, "", "."), 10, "field"); },
+        Kind::Struct => { return (pick(icons, "", "S"), 4, "struct"); },
+        Kind::Enum => { return (pick(icons, "", "E"), 4, "enum"); },
+        Kind::Variant => { return (pick(icons, "", "e"), 7, "variant"); },
+        Kind::Interface => { return (pick(icons, "", "I"), 4, "interface"); },
+        Kind::Constant => { return (pick(icons, "", "c"), 7, "let"); },
+        Kind::Variable => { return (pick(icons, "", "v"), 10, "var"); },
+        Kind::Failure => { return (pick(icons, "", "!"), 4, "failure"); },
+        Kind::Module => { return (pick(icons, "", "M"), 13, "module"); },
+        Kind::Keyword => { return (pick(icons, "", "k"), 3, "keyword"); },
+        Kind::Type => { return (pick(icons, "", "T"), 4, "type"); },
+        Kind::Reexport => { return (pick(icons, "", "M"), 13, "export"); },
+        _ => {}
+    }
+    return (pick(icons, "", "w"), -1, "");
+}
+
+fn pick(c: bool, a: string, b: string) -> string {
+    if (c) {
+        return a;
+    }
+    return b;
+}
+
+// the rest of the chosen completion, if the cursor is at its line's end
+fn ghost_of(s: &App) -> string {
+    if (s.comp.len == 0 || s.mode != Mode::Insert || s.comp_at < 0 || s.comp_at >= s.comp.len) {
+        return "";
+    }
+    if (s.b.cy != s.comp_y || s.b.cx != s.vis_line(s.b.cy).len) {
+        return "";
+    }
+    let w: string = s.comp[s.comp_at].word;
+    let n: i64 = s.comp_prefix.len;
+
+    if (w.len <= n) {
+        return "";
+    }
+    return str::substr(w, n, w.len - n);
+}
+
+// the menu's rows, plus the chosen one's signature and place
+fn menu_of(s: &App) -> PopMenu(App) {
+    var rows: MenuRow[] = [];
+
+    for (let it: &s::&editor::CompItem in &s.comp) {
+        let (icon, group, name) = kind_icon(it.kind, s.cfg.icons);
+        var label: string = name;
+
+        if (it.owner.len > 0 && (it.kind == Kind::Method || it.kind == Kind::Field ||
+            it.kind == Kind::Variant || it.kind == Kind::Module)) {
+            label = "\(label) \(it.owner)";
+        }
+        if (it.exported && it.kind != Kind::Field && it.kind != Kind::Variant) {
+            label = "pub \(label)";
+        }
+        rows.push(MenuRow { icon: icon, group: group, word: it.word, label: label });
+    }
+    var title: string = "";
+    var place: string = "";
+
+    if (s.comp_at >= 0 && s.comp_at < s.comp.len) {
+        let k: i64 = s.comp[s.comp_at].decl;
+
+        if (k >= 0) {
+            let d: &s::&Decl = &s.index.decls[k];
+
+            title = d.detail;
+            var f: string = d.file;
+
+            if (let i = str::rfind(f, "/std/")) {
+                f = str::substr(f, i + 1, f.len - i - 1);
+            } else {
+                f = editor::short_name(s.cwd, f);
+            }
+            place = "\(f):\(d.line)";
+        }
+    }
+    let l: string = s.vis_line(s.comp_y);
+    let col: i64 = col_of(&l, s.comp_x, s.b.tabstop) - s.b.left;
+
+    return PopMenu {
+        rows: rows, at: s.comp_at, typed: s.comp_prefix.len, x: s.edit_x + s.gutter + col,
+        y: s.comp_y - s.b.top, bottom: s.edit_h, title: title, doc: std::copy(s.comp_doc),
+        place: place, look: std::copy(s.look)
+    };
+}
+
 // ---- the whole screen ----------------------------------------------------------------
 
 /// app's frame: paints what prepare read
