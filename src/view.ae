@@ -614,6 +614,103 @@ impl PopMenu(A) as Node(A) {
             f.text(x + 3 + used, row, str::substr(r.word, cut, r.word.len - cut), &st, ww - used);
             var lst: tui::Style = std::copy(st);
 
+            lst.dim = i != self.at;
+            f.text(x + 4 + ww + 1, row, r.label, &lst, lw);
+        }
+        if (self.title.len == 0) {
+            return;
+        }
+        // the docs beside it (right if they fit, else left)
+        var dw: i64 = 60;
+        var dx: i64 = x + w;
+
+        if (dx + 24 > area.x + area.w) {
+            dx = x - dw;
+            if (dx < area.x) {
+                dw = x - area.x;
+                dx = area.x;
+            }
+        } else if (dx + dw > area.x + area.w) {
+            dw = area.x + area.w - dx;
+        }
+        if (dw < 20) {
+            return;
+        }
+        var inner: i64 = dw - 4;
+        var lines: string[] = [];
+        var kinds: i64[] = [];          // 0 title, 1 comment, 2 place
+
+        for (let l: string in wrap(&self.title, inner)) {
+            lines.push(l);
+            kinds.push(0);
+        }
+        if (self.doc.len > 0) {
+            lines.push("");
+            kinds.push(1);
+
+            for (let d: &self::&string in &self.doc) {
+                for (let l: string in wrap(d, inner)) {
+                    lines.push(l);
+                    kinds.push(1);
+                }
+            }
+        }
+        if (self.place.len > 0) {
+            lines.push("");
+            kinds.push(2);
+            lines.push(self.place);
+            kinds.push(2);
+        }
+        // (as wide as the widest line)
+        var widest: i64 = 0;
+
+        for (let l: &lines::&string in &lines) {
+            let lw2: i64 = tui::width(*l);
+
+            if (lw2 > widest) { widest = lw2; }
+        }
+        if (widest < inner) {
+            if (dx < x) { dx += inner - widest; }
+            dw -= inner - widest;
+            inner = widest;
+        }
+        var dh: i64 = lines.len + 2;
+
+        if (dh > 16) { dh = 16; }
+        var dy: i64 = y0;
+
+        if (dy + dh > area.y + self.bottom) { dy = area.y + self.bottom - dh; }
+        if (dy < area.y) { dy = area.y; }
+        if (dh > self.bottom) { dh = self.bottom; }
+        let box: tui::Style = std::copy(self.look.menu_doc);
+
+        f.fill(Rect { x: dx, y: dy, w: dw, h: dh }, &box);
+        let bst: tui::Style = tui::merge(&box, &self.look.menu_border);
+        let bar: string = str::repeat("─", dw - 2);
+
+        f.text(dx, dy, "╭\(bar)╮", &bst, dw);
+        f.text(dx, dy + dh - 1, "╰\(bar)╯", &bst, dw);
+
+        for (let k: i64 in 1..(dh - 1)) {
+            f.text(dx, dy + k, "│", &bst, 1);
+            f.text(dx + dw - 1, dy + k, "│", &bst, 1);
+        }
+        let tst: tui::Style = tui::merge(&box, &self.look.menu_doc_title);
+        var wst: tui::Style = std::copy(box);
+
+        wst.dim = true;
+
+        for (let k: i64 in 0..(dh - 2)) {
+            if (k >= lines.len) { break; }
+            var st: &tui::Style = &box;
+
+            if (kinds[k] == 0) { st = &tst; }
+            if (kinds[k] == 2) { st = &wst; }
+            f.text(dx + 2, dy + 1 + k, lines[k], st, inner);
+        }
+    }
+}
+
 // ---- the whole screen ----------------------------------------------------------------
 
 /// app's frame: paints what prepare read
