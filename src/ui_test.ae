@@ -406,3 +406,115 @@ fn setup(name: string) -> App {
     }
     return 0;
 }
+
+#test fn help_is_a_buffer() -> i32 {
+    var a: App = setup("help");
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("main.ae");
+    type_keys(mut &ui, mut &a, ":help undo<CR>");
+    if (!a.b.readonly || !str::eq(a.b.ft.syntax, "markdown")) {
+        return 1;
+    }
+    if (!str::eq(a.b.text.get(a.b.cy), "## Undo")) {
+        return 2;
+    }
+    let n: i64 = a.b.text.count;
+
+    type_keys(mut &ui, mut &a, "dd");
+    if (a.b.text.count != n || !str::contains(a.msg, "E21")) {
+        return 3;
+    }
+    type_keys(mut &ui, mut &a, "ihello<Esc>");
+    if (a.b.text.count != n || a.mode != Mode::Normal || a.b.modified) {
+        return 5;
+    }
+    type_keys(mut &ui, mut &a, "q");
+    if (!str::ends_with(a.b.path, "main.ae")) {
+        return 4;
+    }
+    return 0;
+}
+
+#test fn completes_words() -> i32 {
+    var a: App = setup("complete");
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("main.ae");
+    // two characters of a word in the buffer: a menu below, first item chosen
+    type_keys(mut &ui, mut &a, "Goma");
+    // (main from the buffer; match, a keyword)
+    if (a.comp.len != 2 || !str::eq(a.comp[0].word, "main") || a.comp_at != 0) {
+        return 1;
+    }
+    let t: string = shot(mut &ui, mut &a);
+
+    if (!str::contains(row(&t, 4), "main")) {
+        return 2;
+    }
+    // (its rest shown after the cursor, not yet in the text)
+    if (!str::contains(row(&t, 3), "main") || !str::eq(a.b.text.get(3), "ma")) {
+        return 3;
+    }
+    // Enter accepts it (no newline)
+    type_keys(mut &ui, mut &a, "<CR>");
+    if (!str::eq(a.b.text.get(3), "main") || a.comp.len != 0 || a.b.text.count != 4) {
+        return 4;
+    }
+    // Ctrl+n from one character; keywords too; Ctrl+e closes it
+    type_keys(mut &ui, mut &a, "<Space>r<C-n>");
+    if (a.comp.len == 0 || !str::eq(a.comp[0].word, "return")) {
+        return 5;
+    }
+    type_keys(mut &ui, mut &a, "<C-e>");
+    if (!str::eq(a.b.text.get(3), "main r") || a.comp.len != 0) {
+        return 6;
+    }
+    type_keys(mut &ui, mut &a, "<Esc>");
+    if (a.mode != Mode::Normal || a.comp.len != 0) {
+        return 7;
+    }
+    // no match: no menu; Tab indents (expandtab: spaces)
+    type_keys(mut &ui, mut &a, "o<Tab>zq<Esc>");
+    if (a.comp.len != 0 || !str::eq(a.b.text.get(4), "    zq")) {
+        return 8;
+    }
+    return 0;
+}
+
+#test fn completes_declarations() -> i32 {
+    var a: App = setup("decls");
+    var ui = tui::headless(100, 20, view::view);
+
+    a.cols = 100;
+    a.rows = 20;
+    a.edit("main.ae");
+    a.index_stale = false;
+    let p: string = a.b.path;
+    let head: string = "== \(p) (3 lines)\n     imports: std/string (str), shop.ae { Item }\n";
+    let tail: string = """    1 fn main() -> i32
+== /h/std/string.ae (900 lines)
+   10 export fn trim(s: string) -> string   // s without the spaces at its ends
+   12 export fn to_upper(s: string) -> string
+   14 fn hidden() -> i32
+== shop.ae (20 lines)
+    3 export struct Item { export name: string; qty: i64; }   // an item
+    9 export enum Size { Small, Large }
+   12 impl Item
+   14   export fn total(self: &Item) -> i64   // how many
+""";
+    let outline: string = "\(head)\(tail)";
+
+    a.take_symbols(&str::split(outline, "\n"));
+    // str:: : the module's exports (not its private names)
+    type_keys(mut &ui, mut &a, "Gostr::");
+    if (a.comp.len != 2 || !str::eq(a.comp[0].word, "to_upper") ||
+        !str::eq(a.comp[1].word, "trim")) {
+        return 1;
+    }
+    type_keys(mut &ui, mut &a, "t");
+    if (a.comp.len != 2 || a.comp[0].kind != Kind::Function) {
+        return 2;
+    }
+    type_keys(mut &ui, mut &a, "r");
+    let t: string = shot(mut &ui, mut &a);
