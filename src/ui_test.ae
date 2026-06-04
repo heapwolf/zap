@@ -518,3 +518,64 @@ fn setup(name: string) -> App {
     }
     type_keys(mut &ui, mut &a, "r");
     let t: string = shot(mut &ui, mut &a);
+
+    // the menu: icon, word, kind; beside it the signature and comment
+    if (!str::contains(t, "trim") || !str::contains(t, "pub fn") ||
+        !str::contains(t, "export fn trim(s: string) -> string") ||
+        !str::contains(t, "s without the spaces at its ends") ||
+            !str::contains(t, "std/string.ae:10")) {
+        return 3;
+    }
+    type_keys(mut &ui, mut &a, "<CR><Esc>");
+    if (!str::eq(a.b.text.get(3), "str::trim")) {
+        return 4;
+    }
+    // an enum's variants; . : fields and methods; an imported name
+    type_keys(mut &ui, mut &a, "oSize::");
+    if (a.comp.len != 2 || a.comp[0].kind != Kind::Variant) {
+        return 5;
+    }
+    type_keys(mut &ui, mut &a, "<C-e><Esc>ox.to");
+    if (a.comp.len != 1 || !str::eq(a.comp[0].word, "total") || a.comp[0].kind != Kind::Method) {
+        return 6;
+    }
+    type_keys(mut &ui, mut &a, "<C-e><Esc>oIt");
+    if (a.comp.len != 1 || !str::eq(a.comp[0].word, "Item") || a.comp[0].kind != Kind::Struct) {
+        return 7;
+    }
+    return 0;
+}
+
+#test fn edits_a_spreadsheet() -> i32 {
+    var a: App = setup("sheet");
+    let p: string = "\(a.cwd)/costs.csv";
+
+    fs::write_file(p, "item,qty,price\npen,2,1.5\nink,3,2\n");
+    var ui = tui::headless(70, 14, view::view);
+
+    type_keys(mut &ui, mut &a, "<C-t>");
+    a.edit("costs.csv");
+    let t: string = shot(mut &ui, mut &a);
+
+    if (!a.sheet_on() || !a.b.sheet[0].header) {
+        return 1;
+    }
+    // the bar, column letters, header row, rows (numbers right-aligned)
+    if (!str::contains(row(&t, 0), "A1  item") || !str::contains(row(&t, 1), "A")) {
+        print(t);
+        return 2;
+    }
+    if (!str::contains(row(&t, 2), "item") || !str::contains(row(&t, 3), "pen")) {
+        return 3;
+    }
+    if (!str::contains(t, " A1 ")) {
+        return 4;
+    }
+    // a formula in D4: evaluated, written to the file as text
+    type_keys(mut &ui, mut &a, "Gllo=SUM(C2:C3)*2<CR>");
+    if (a.b.sheet[0].r != 3 || a.b.sheet[0].c != 2) {
+        return 5;
+    }
+    type_keys(mut &ui, mut &a, "l");
+    type_keys(mut &ui, mut &a, "=B2*C2<CR>");
+    let t2: string = shot(mut &ui, mut &a);
