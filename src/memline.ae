@@ -319,6 +319,121 @@ impl MemLine {
         self.trim(k);
     }
 
+    // has the file changed (size or time) since it was read?
+    fn changed_on_disk(self: &MemLine) -> bool {
+        match (fs::info(self.file)) {
+            i => { return i.size != self.stamp || i.modified != self.stamp_time; },
+            e: fs::NotFound => { return true; },
+            e2: fs::PermissionDenied => { return true; },
+            e3: fs::IoError => { return true; }
+        }
+        return true;
+    }
+
+    // evict least recently used chunks while too many are loaded
+    // (except keep: the one just used)
+    fn trim(mut self: &MemLine, keep: i64) -> void {
+        while (self.loaded.len > self.resident) {
+            var best: i64 = -1;
+            var at: i64 = -1;
+
+            for (let j: i64, let k: i64 in &self.loaded) {
+                if (k == keep) { continue; }
+                if (best < 0 || self.chunks[k].used < self.chunks[best].used) {
+                    best = k;
+                    at = j;
+                }
+            }
+            if (best < 0) {
+                return;
+            }
+            if (!self.unload(best)) {
+                return;
+            }
+            self.drop_loaded(at);
+        }
+    }
+
+    // remove entry j from the loaded list
+    fn drop_loaded(mut self: &MemLine, j: i64) -> void {
+        let n: i64 = self.loaded.len;
+
+        self.loaded[j] = self.loaded[n - 1];
+        self.loaded.pop();
+    }
+
+    // evict chunk k (a changed one goes to the swap file first) -> did it
+    // go? (not if the swap file cannot be written)
+    fn unload(mut self: &MemLine, k: i64) -> bool {
+        if (self.chunks[k].dirty) {
+            if (self.swap.len == 0) { self.swap = swap_path(self.file); }
+            var b: str::Builder;
+
+            for (let l: string in &self.chunks[k].lines) {
+                b.add(l);
+                b.add_byte(10);
+            }
+            let text: string = b.to_string();
+
+            match (fs::write_text(self.swap, text, fs::Write { append: true })) {
+                v => {},
+                e: fs::NotFound => { return false; },
+                e2: fs::PermissionDenied => { return false; },
+                e3: fs::IsADirectory => { return false; },
+                e4: fs::IoError => { return false; }
+            }
+            self.chunks[k].place = Where::Swap;
+            self.chunks[k].off = self.swap_size;
+            self.chunks[k].size = text.len;
+            self.swap_size += text.len;
+            self.chunks[k].dirty = false;
+            self.swapped += 1;
+        }
+        self.chunks[k].lines = [];
+        self.chunks[k].loaded = false;
+        return true;
+    }
+
+    /// line i (0 <= i < count)
+    export fn get(mut self: &MemLine, i: i64) -> string {
+        let k: i64 = self.locate(i);
+
+        self.load(k);
+        return self.chunks[k].lines[i - self.hint_start];
+    }
+
+    /// set line i to s
+    export fn set(mut self: &MemLine, i: i64, s: string) -> void {
+        let k: i64 = self.locate(i);
+
+        self.load(k);
+        let j: i64 = i - self.hint_start;
+
+        self.chunks[k].lines[j] = s;
+        self.chunks[k].dirty = true;
+    }
+
+    /// insert s as line i (lines from i on move down; i == count: append)
+    export fn insert(mut self: &MemLine, i: i64, s: string) -> void {
+        let k: i64 = self.locate(i);
+
+        self.load(k);
+        let j: i64 = i - self.hint_start;
+
+        self.chunks[k].lines.push("");
+        var m: i64 = self.chunks[k].lines.len - 1;
+
+        while (m > j) {
+            self.chunks[k].lines[m] = self.chunks[k].lines[m - 1];
+            m -= 1;
+        }
+        self.chunks[k].lines[j] = s;
+        self.chunks[k].count += 1;
+        self.chunks[k].dirty = true;
+        self.count += 1;
+        if (self.chunks[k].count > SPLIT_LINES) { self.split(k); }
+    }
+
     /// remove line i (later lines move up)
     export fn remove(mut self: &MemLine, i: i64) -> void {
         let k: i64 = self.locate(i);
