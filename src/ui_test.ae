@@ -407,6 +407,135 @@ fn setup(name: string) -> App {
     return 0;
 }
 
+#test fn selects_and_operates() -> i32 {
+    var a: App = setup("visual");
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("main.ae");
+    // v: characters; y yanks them, also to the terminal clipboard
+    type_keys(mut &ui, mut &a, "vel");
+    let t: string = shot(mut &ui, mut &a);
+
+    if (a.mode != Mode::Visual || !str::contains(t, " VISUAL ")) {
+        return 1;
+    }
+    type_keys(mut &ui, mut &a, "y");
+    if (!str::eq(a.reg, "fn ") || a.mode != Mode::Normal) {
+        return 2;
+    }
+    if (a.clips.len != 1 || !str::eq(a.clips[0], "\x1b]52;c;Zm4g\x07")) {
+        return 3;
+    }
+    // V: lines
+    type_keys(mut &ui, mut &a, "Vjd");
+    if (a.b.text.count != 1 || !str::eq(a.b.text.get(0), "}")) {
+        return 4;
+    }
+    type_keys(mut &ui, mut &a, "u");
+    if (a.b.text.count != 3) {
+        return 5;
+    }
+    // Ctrl+v: a block, cut from two lines
+    type_keys(mut &ui, mut &a, "gg<C-v>jlx");
+    if (!str::eq(a.b.text.get(0), " main() -> i32 {") || !str::eq(a.b.text.get(1), "  return 0;")) {
+        return 6;
+    }
+    type_keys(mut &ui, mut &a, "u");
+    // I on a block: typed on each of its lines
+    type_keys(mut &ui, mut &a, "gg<C-v>jI// <Esc>");
+    if (!str::eq(a.b.text.get(0), "// fn main() -> i32 {") ||
+        !str::eq(a.b.text.get(1), "//     return 0;")) {
+        return 7;
+    }
+    // (one change, one undo)
+    type_keys(mut &ui, mut &a, "u");
+    if (!str::eq(a.b.text.get(1), "    return 0;")) {
+        return 8;
+    }
+    // : on a selection: its lines become the range
+    type_keys(mut &ui, mut &a, "ggVj:");
+    if (!str::eq(a.cmd.text, "'<,'>")) {
+        return 9;
+    }
+    type_keys(mut &ui, mut &a, "s/ /_/g<CR>");
+    if (!str::eq(a.b.text.get(0), "fn_main()_->_i32_{") || !str::eq(a.b.text.get(2), "}")) {
+        return 10;
+    }
+    // U, gv, ~
+    type_keys(mut &ui, mut &a, "uggveU");
+    if (!str::eq(a.b.text.get(0), "FN main() -> i32 {")) {
+        return 11;
+    }
+    type_keys(mut &ui, mut &a, "gv~");
+    if (!str::eq(a.b.text.get(0), "fn main() -> i32 {")) {
+        return 12;
+    }
+    // p over a selection: replaces it with the register
+    type_keys(mut &ui, mut &a, "yiwwviwp");
+    if (!str::eq(a.b.text.get(0), "fn fn() -> i32 {") || !str::eq(a.reg, "main")) {
+        return 13;
+    }
+    return 0;
+}
+
+#test fn mouse_selects() -> i32 {
+    var a: App = setup("mouse");
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("main.ae");
+    shot(mut &ui, mut &a);
+    let g: i64 = a.gutter;
+
+    // press on line 1, drag to line 2's fourth column
+    if (!a.in_text(a.edit_x + g, 0) || a.in_text(a.edit_x - 2, 0)) {
+        return 1;
+    }
+    a.mouse_press(g, 0, 1000);
+    a.mouse_drag(g + 1, 0);
+    if (a.mode != Mode::Visual) {
+        return 2;
+    }
+    a.mouse_drag(g + 3, 1);
+    a.mouse_release();
+    let t: string = shot(mut &ui, mut &a);
+
+    if (a.vis[0].sel_lo != 0 || a.vis[1].sel_hi != 4) {
+        return 3;
+    }
+    type_keys(mut &ui, mut &a, "y");
+    if (!str::eq(a.reg, "fn main() -> i32 {\n    ")) {
+        return 4;
+    }
+    // double click: a word; triple: the line
+    a.mouse_press(g + 4, 0, 5000);
+    a.mouse_press(g + 4, 0, 5100);
+    a.mouse_release();
+    if (a.mode != Mode::Visual || a.vkind != 1) {
+        return 5;
+    }
+    type_keys(mut &ui, mut &a, "y");
+    if (!str::eq(a.reg, "main")) {
+        return 6;
+    }
+    a.mouse_press(g + 4, 1, 9000);
+    a.mouse_press(g + 4, 1, 9100);
+    a.mouse_press(g + 4, 1, 9200);
+    if (a.mode != Mode::Visual || a.vkind != 2) {
+        return 7;
+    }
+    type_keys(mut &ui, mut &a, "d");
+    if (a.b.text.count != 2) {
+        return 8;
+    }
+    // a press alone moves the cursor without selecting
+    a.mouse_press(g + 1, 0, 20000);
+    a.mouse_release();
+    if (a.mode != Mode::Normal || a.b.cx != 1) {
+        return 9;
+    }
+    return 0;
+}
+
 #test fn help_is_a_buffer() -> i32 {
     var a: App = setup("help");
     var ui = tui::headless(70, 12, view::view);
