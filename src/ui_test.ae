@@ -536,6 +536,110 @@ fn setup(name: string) -> App {
     return 0;
 }
 
+#test fn keeps_every_state() -> i32 {
+    var a: App = setup("history");
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("main.ae");
+    type_keys(mut &ui, mut &a, "GAone<Esc>otwo<Esc>uothree<Esc>");
+    if (!str::eq(a.b.text.get(2), "}one") || !str::eq(a.b.text.get(3), "three")) {
+        return 1;
+    }
+    // g-: back through every state, including the branch u left
+    type_keys(mut &ui, mut &a, "g-");
+    if (!str::eq(a.b.text.get(3), "two")) {
+        return 2;
+    }
+    type_keys(mut &ui, mut &a, "g-g-");
+    if (!str::eq(a.b.text.get(2), "}") || a.b.modified) {
+        return 3;
+    }
+    type_keys(mut &ui, mut &a, "3g+");
+    if (!str::eq(a.b.text.get(3), "three")) {
+        return 4;
+    }
+    type_keys(mut &ui, mut &a, ":earlier 1h<CR>");
+    if (a.b.hist.at != 0) {
+        return 5;
+    }
+    type_keys(mut &ui, mut &a, ":later 1h<CR>");
+    if (a.b.hist.at != 3) {
+        return 6;
+    }
+    type_keys(mut &ui, mut &a, ":undolist<CR>");
+    if (a.panel.len != 4) {
+        return 7;
+    }
+    return 0;
+}
+
+#test fn ranges_and_careful_writes() -> i32 {
+    var a: App = setup("ranges");
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("main.ae");
+    type_keys(mut &ui, mut &a, ":2,$d<CR>");
+    if (a.b.text.count != 1) {
+        return 1;
+    }
+    type_keys(mut &ui, mut &a, "u:%s/i/I/g<CR>");
+    if (!str::eq(a.b.text.get(0), "fn maIn() -> I32 {")) {
+        return 2;
+    }
+    type_keys(mut &ui, mut &a, ":.+1y<CR>");
+    if (!str::eq(a.reg, "    return 0;\n")) {
+        return 3;
+    }
+    // the file changed under the buffer: not overwritten without !
+    let p: string = a.b.path;
+
+    fs::write_file(p, "changed elsewhere\n");
+    type_keys(mut &ui, mut &a, ":w<CR>");
+    if (!str::contains(a.msg, "E949") || !str::eq(fs::read_file(p) ?? "", "changed elsewhere\n")) {
+        return 4;
+    }
+    type_keys(mut &ui, mut &a, ":w!<CR>");
+    if (!str::starts_with(fs::read_file(p) ?? "", "fn maIn()") || a.b.modified) {
+        return 5;
+    }
+    return 0;
+}
+
+#test fn tab_menu_cycles() -> i32 {
+    var a: App = setup("wild");
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("main.ae");
+    type_keys(mut &ui, mut &a, ":b<Tab>");
+    // bdelete, bnext, bprevious, buffer, buffers, build: first one chosen, in a menu
+    if (a.wild.len < 5 || !str::eq(a.cmd.text, "bdelete")) {
+        return 1;
+    }
+    let t: string = shot(mut &ui, mut &a);
+
+    if (!str::contains(row(&t, 5), "bdelete") || !str::contains(row(&t, 9), "buffers")) {
+        return 2;
+    }
+    type_keys(mut &ui, mut &a, "<Tab><Tab>");
+    if (!str::eq(a.cmd.text, "bprevious")) {
+        return 3;
+    }
+    type_keys(mut &ui, mut &a, "<S-Tab>");
+    if (!str::eq(a.cmd.text, "bnext")) {
+        return 4;
+    }
+    // typing on closes the menu
+    type_keys(mut &ui, mut &a, "<Space>");
+    if (a.wild.len != 0 || !str::eq(a.cmd.text, "bnext ")) {
+        return 5;
+    }
+    type_keys(mut &ui, mut &a, "<Esc>:theme <Tab>");
+    if (a.wild.len != 49 || !str::eq(a.cmd.text, "theme amber")) {
+        return 6;
+    }
+    return 0;
+}
+
 #test fn help_is_a_buffer() -> i32 {
     var a: App = setup("help");
     var ui = tui::headless(70, 12, view::view);
