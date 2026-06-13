@@ -3144,6 +3144,110 @@ impl App {
         return (line, byte_at(&l, col, self.b.tabstop));
     }
 
+    /// is screen cell (x, y) in the editor's text (not the tree, divider, or status)?
+    export fn in_text(self: &App, x: i64, y: i64) -> bool {
+        return x >= self.edit_x && y >= 0 && y < self.edit_h;
+    }
+
+    /// left button pressed at (x, y) of the editor window, at ms: moves the
+    /// cursor there; a double click selects a word, a triple a line
+    export fn mouse_press(mut self: &App, x: i64, y: i64, ms: i64) -> void {
+        if (self.viewing()) {
+            self.focus_tree = false;
+            if (self.mode == Mode::Command || self.mode == Mode::Search) {
+                self.mode = Mode::Normal;
+            }
+            self.viewer[0].press_x = x;
+            self.viewer[0].press_y = y;
+            self.viewer[0].press_px = self.viewer[0].px;
+            self.viewer[0].press_py = self.viewer[0].py;
+            self.dragging = true;
+            return;
+        }
+        if (self.sheet_on()) {
+            self.sheet_press(x, y, ms);
+            return;
+        }
+        let (line, bx) = self.text_at(x, y);
+
+        if (ms - self.click_ms < 400 && line == self.click_y && self.clicks < 3) {
+            self.clicks += 1;
+        } else {
+            self.clicks = 1;
+        }
+        self.click_ms = ms;
+        self.click_y = line;
+        self.focus_tree = false;
+        if (self.mode == Mode::Command || self.mode == Mode::Search) { self.mode = Mode::Normal; }
+        if (self.mode == Mode::Insert) {
+            self.blk = [];
+            self.comp = [];
+            self.b.commit();
+            self.mode = Mode::Normal;
+        }
+        if (self.mode == Mode::Visual) { self.end_visual(); }
+        // (a click on a Markdown mermaid block draws it)
+        if (self.cfg.mermaid && self.clicks == 1 && str::eq(self.b.ft.syntax, "markdown") &&
+            self.diagram_at(line).len > 0) {
+            self.go(line, bx, true);
+            self.open_viewer(line);
+            return;
+        }
+        self.go(line, bx, true);
+        self.press_y = self.b.cy;
+        self.press_x = self.b.cx;
+        self.dragging = true;
+        if (self.clicks == 2) {
+            let (a, e) = self.word_at(line, self.b.cx, false, false);
+
+            if (e > a) {
+                self.go(line, a, true);
+                self.start_visual(1);
+                let l: string = self.b.text.get(line);
+
+                self.go(line, prev_char(&l, e), true);
+            }
+        } else if (self.clicks == 3) {
+            self.start_visual(2);
+        }
+    }
+
+    /// mouse moved with the button down: extends the selection to (x, y)
+    export fn mouse_drag(mut self: &App, x: i64, y: i64) -> void {
+        if (!self.dragging) {
+            return;
+        }
+        if (self.viewing()) {
+            self.viewer[0].px = self.viewer[0].press_px - (x - self.viewer[0].press_x);
+            self.viewer[0].py = self.viewer[0].press_py - (y - self.viewer[0].press_y);
+            self.pan_by(0, 0);
+            return;
+        }
+        if (self.sheet_on()) {
+            self.sheet_drag_to(x, y);
+            return;
+        }
+        let (line, bx) = self.text_at(x, y);
+
+        if (self.mode != Mode::Visual) {
+            if (line == self.press_y && bx == self.press_x) {
+                return;
+            }
+            self.go(self.press_y, self.press_x, true);
+            self.start_visual(1);
+        }
+        self.go(line, bx, true);
+        self.scroll();
+    }
+
+    /// button released
+    export fn mouse_release(mut self: &App) -> void {
+        self.dragging = false;
+        self.sizing = -1;
+    }
+
+    // ---- insert mode -----------------------------------------------------------------
+
     // inserts text at the cursor
     export fn insert_text(mut self: &App, text: string) -> void {
         self.b.begin();
