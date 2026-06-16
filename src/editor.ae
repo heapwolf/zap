@@ -5771,6 +5771,114 @@ impl App {
         self.go(line, byte_at(&l, col, self.b.tabstop), true);
     }
 
+    /// a click on the tree's row y (of its window)
+    export fn click_tree(mut self: &App, y: i64) -> void {
+        let i: i64 = self.tree.top + y;
+
+        if (i >= self.tree.rows.len) {
+            return;
+        }
+        self.focus_tree = true;
+        if (self.mode == Mode::Command || self.mode == Mode::Search) { self.mode = Mode::Normal; }
+        self.tree.select(i, self.tree_h);
+        self.tree_open(i, false);
+    }
+
+    /// wheel over column x: scrolls the tree or editor by rows
+    export fn wheel(mut self: &App, x: i64, rows: i64) -> void {
+        if (self.split.at > 0 && x < self.split.at) {
+            // the view moves; the selection stays on screen with it (show() puts the
+            // view back on the selection before each frame)
+            let h: i64 = self.tree_h;
+            var t: i64 = self.tree.top + rows;
+            let most: i64 = self.tree.rows.len - h;
+
+            if (t > most) { t = most; }
+            if (t < 0) { t = 0; }
+            self.tree.top = t;
+            if (self.tree.cursor < t) { self.tree.cursor = t; }
+            if (h > 0 && self.tree.cursor >= t + h) { self.tree.cursor = t + h - 1; }
+            return;
+        }
+        if (self.viewing()) {
+            self.pan_by(0, rows);
+            return;
+        }
+        if (self.sheet_on()) {
+            self.sheet_wheel(rows);
+            return;
+        }
+        let h: i64 = self.edit_h;
+        let count: i64 = self.b.text.count;
+        var so: i64 = self.cfg.scrolloff;
+
+        if (so * 2 >= h) { so = (h - 1) / 2; }
+        if (so < 0) { so = 0; }
+        // (down to the last line with scrolloff lines above it)
+        var t: i64 = self.b.top + rows;
+
+        if (t > count - 1 - so) { t = count - 1 - so; }
+        if (t < 0) { t = 0; }
+        self.b.top = t;
+        // keep the cursor within the lines scroll() allows (scrolloff from either
+        // edge, except at the file's top), else scroll() would move the view back
+        var lo: i64 = t + so;
+
+        if (t == 0) { lo = 0; }
+        var hi: i64 = t + h - 1 - so;
+
+        if (hi > count - 1) { hi = count - 1; }
+        if (hi < lo) { hi = lo; }
+        var y: i64 = self.b.cy;
+
+        if (y < lo) { y = lo; }
+        if (y > hi) { y = hi; }
+        if (y != self.b.cy) { self.go_line(y); }
+    }
+
+    /// mode name for the status line
+    export fn mode_name(self: &App) -> string {
+        if (self.viewing() && self.mode == Mode::Normal && !self.focus_tree) {
+            return "VIEW";
+        }
+        if (self.focus_tree && self.mode == Mode::Normal) {
+            return "TREE";
+        }
+        if (self.mode == Mode::Visual && self.vkind == 2) {
+            return "V-LINE";
+        }
+        if (self.mode == Mode::Visual && self.vkind == 3) {
+            return "V-BLOCK";
+        }
+        return MODE_NAMES[self.mode as i64];
+    }
+}
+
+// ---- the spreadsheet (a CSV shown as a grid: sheet.ae) -------------------------------
+
+impl App {
+    /// is the buffer shown as a spreadsheet?
+    export fn sheet_on(self: &App) -> bool { return self.b.sheet.len > 0; }
+
+    // wrappers over the buffer's sheet; sheet_raw: cell (r, c) as written
+    fn sheet_raw(self: &App, r: i64, c: i64) -> string {
+        let sh: &self::&Sheet = &self.b.sheet[0];
+
+        return sh.raw(r, c);
+    }
+
+    fn sheet_with(self: &App, r: i64, c: i64, t: string) -> string[] {
+        let sh: &self::&Sheet = &self.b.sheet[0];
+
+        return sh.with_cell(r, c, t);
+    }
+
+    fn sheet_edge(self: &App, x: i64, w: i64) -> i64 {
+        let sh: &self::&Sheet = &self.b.sheet[0];
+
+        return sh.edge_at(x, w);
+    }
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
