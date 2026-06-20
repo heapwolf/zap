@@ -313,6 +313,114 @@ fn setup(name: string) -> App {
     return 0;
 }
 
+#test fn drags_the_split() -> i32 {
+    var a: App = setup("drag");
+    var ui = tui::headless(70, 12, view::view);
+
+    shot(mut &ui, mut &a);
+    let at: i64 = a.split.at;
+    let press = tui::Event::Mouse {
+        kind: term_press(),
+        button: left(),
+        x: at,
+        y: 3,
+        ctrl: false,
+        alt: false,
+        shift: false
+    };
+
+    tui::handle(mut &ui, mut &a, &press);
+    shot(mut &ui, mut &a);
+    let drag = tui::Event::Mouse {
+        kind: term_drag(),
+        button: left(),
+        x: at + 7,
+        y: 3,
+        ctrl: false,
+        alt: false,
+        shift: false
+    };
+
+    tui::handle(mut &ui, mut &a, &drag);
+    let rel = tui::Event::Mouse {
+        kind: term_release(),
+        button: left(),
+        x: at + 7,
+        y: 3,
+        ctrl: false,
+        alt: false,
+        shift: false
+    };
+
+    tui::handle(mut &ui, mut &a, &rel);
+    shot(mut &ui, mut &a);
+    if (a.split.at != at + 7 || a.split.dragging) {
+        return 1;
+    }
+    return 0;
+}
+
+#test fn clicks_and_wheel() -> i32 {
+    var a: App = setup("click");
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("notes/HOSTED.md");
+    shot(mut &ui, mut &a);
+    // click the third text line, fifth column (past the gutter)
+    let x: i64 = a.split.at + 1 + a.gutter + 4;
+
+    tui::handle(
+        mut &ui, mut &a,
+        &tui::Event::Mouse {
+            kind: term_press(),
+            button: left(),
+            x: x,
+            y: 2,
+            ctrl: false,
+            alt: false,
+            shift: false
+        }
+    );
+    if (a.b.cy != 2 || a.b.cx != 4) {
+        return 1;
+    }
+    // clicking the tree's README.md opens it
+    shot(mut &ui, mut &a);
+    var row: i64 = -1;
+
+    for (let i: i64, let v: &a::&editor::VisRow in &a.tree_vis) {
+        if (str::eq(v.name, "README.md")) { row = i; }
+    }
+    if (row < 0) {
+        return 2;
+    }
+    tui::handle(
+        mut &ui, mut &a,
+        &tui::Event::Mouse {
+            kind: term_press(),
+            button: left(),
+            x: 3,
+            y: row,
+            ctrl: false,
+            alt: false,
+            shift: false
+        }
+    );
+    if (!str::ends_with(a.b.path, "README.md")) {
+        return 3;
+    }
+    type_keys(mut &ui, mut &a, ":b 2<CR>");
+    if (!str::ends_with(a.b.path, "HOSTED.md")) {
+        return 4;
+    }
+    a.wheel(a.split.at + 5, 3);
+    shot(mut &ui, mut &a);
+    if (a.b.top != 3) {
+        return 5;
+    }
+    return 0;
+}
+
     // (the last tab's highlight keeps its trailing space)
     if (!str::contains(t, " Themes\u{a0}")) {
         return 10;
