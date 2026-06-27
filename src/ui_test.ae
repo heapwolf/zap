@@ -421,6 +421,112 @@ fn setup(name: string) -> App {
     return 0;
 }
 
+#test fn wheel_scrolls_on() -> i32 {
+    var a: App = setup("wheel");
+    var lines: str::Builder;
+
+    for (let i: i64 in 0..200) { lines.add("line \(i)\n"); }
+    fs::write_file("\(a.cwd)/long.txt", lines.to_string());
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("long.txt");
+    shot(mut &ui, mut &a);
+
+    // each wheel turn, painted in between: the view keeps scrolling down
+    for (let k: i64 in 0..10) {
+        a.wheel(a.split.at + 5, 3);
+        shot(mut &ui, mut &a);
+    }
+    if (a.b.top != 30) {
+        return 1;
+    }
+
+    for (let k: i64 in 0..4) {
+        a.wheel(a.split.at + 5, -3);
+        shot(mut &ui, mut &a);
+    }
+    if (a.b.top != 18) {
+        return 2;
+    }
+
+    // the tree too: past its selection
+    for (let k: i64 in 0..2) {
+        a.wheel(1, 3);
+        shot(mut &ui, mut &a);
+    }
+    if (a.tree.rows.len > a.tree_h && a.tree.top == 0) {
+        return 3;
+    }
+
+    // to the end and back to the top
+    for (let k: i64 in 0..100) {
+        a.wheel(a.split.at + 5, 3);
+        shot(mut &ui, mut &a);
+    }
+    if (a.b.top != 196) {
+        return 4;
+    }
+
+    for (let k: i64 in 0..100) {
+        a.wheel(a.split.at + 5, -3);
+        shot(mut &ui, mut &a);
+    }
+    if (a.b.top != 0) {
+        return 5;
+    }
+    return 0;
+}
+
+#test fn inserts_lines() -> i32 {
+    var a: App = setup("insert");
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("main.ae");
+    type_keys(mut &ui, mut &a, "jA<CR>x<BS>y<Esc>");
+    if (!str::eq(a.b.text.get(2), "    y") || a.mode != Mode::Normal) {
+        return 1;
+    }
+    type_keys(mut &ui, mut &a, "u");
+    if (a.b.text.count != 3) {
+        return 2;
+    }
+    type_keys(mut &ui, mut &a, ":%s/0/42/g<CR>");
+    if (!str::eq(a.b.text.get(1), "    return 42;")) {
+        return 3;
+    }
+    type_keys(mut &ui, mut &a, "3G>>");
+    if (!str::eq(a.b.text.get(2), "    }")) {
+        return 4;
+    }
+    return 0;
+}
+
+fn term_press() -> term::MouseKind { return term::MouseKind::Press; }
+
+fn term_drag() -> term::MouseKind { return term::MouseKind::Drag; }
+
+fn term_release() -> term::MouseKind { return term::MouseKind::Release; }
+
+fn left() -> term::Button { return term::Button::Left; }
+
+#test fn palette_categories() -> i32 {
+    var a: App = setup("palette");
+    var ui = tui::headless(90, 20, view::view);
+
+    a.edit("main.ae");
+    type_keys(mut &ui, mut &a, "<C-k>");
+    // opens at once: the project is listed in the background
+    if (!str::eq(a.picking, "palette") || a.cat != 0 || !a.walking) {
+        return 1;
+    }
+
+    while (a.has_work()) { a.background(); }
+    // Files: the project's three files; typing filters, Enter opens
+    if (a.pick_items.len != 3) {
+        return 2;
+    }
+    let t: string = shot(mut &ui, mut &a);
+
     // (the last tab's highlight keeps its trailing space)
     if (!str::contains(t, " Themes\u{a0}")) {
         return 10;
