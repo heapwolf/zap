@@ -917,6 +917,124 @@ impl App {
         if (self.b.left < 0) { self.b.left = 0; }
     }
 
+    /// how far a wheel turn in direction dir (-1, 1 vertical; -2, 2 sideways)
+    /// moves at ms (milliseconds), base cells at slowest. Speed rises smoothly
+    /// while quick turns go the same way (a quarter of base more each, up to
+    /// scrollaccel times), back to 1x after a pause or a reversal. Leftover
+    /// fractions carry to the next turn, so fast scrolls move evenly
+    export fn wheel_amount(mut self: &App, dir: i64, base: i64, ms: i64) -> i64 {
+        let quick: bool = dir == self.wheel_dir && ms - self.wheel_ms < 150 && ms >= self.wheel_ms;
+
+        if (quick) {
+            self.wheel_speed += 25;
+        } else {
+            self.wheel_speed = 100;
+            self.wheel_rest = 0;
+        }
+        let cap: i64 = self.cfg.scrollaccel * 100;
+
+        if (self.wheel_speed > cap) { self.wheel_speed = cap; }
+        if (self.wheel_speed < 100) { self.wheel_speed = 100; }
+        self.wheel_dir = dir;
+        self.wheel_ms = ms;
+        // (hundredths of a cell)
+        let total: i64 = base * self.wheel_speed + self.wheel_rest;
+        let cells: i64 = total / 100;
+
+        self.wheel_rest = total - cells * 100;
+        if (dir < 0) {
+            return -cells;
+        }
+        return cells;
+    }
+
+    /// how far h, l, Left or Right move this time (other keys: 1). Held down
+    /// (repeats under 150 ms apart): 1x for the first eight, then a tenth more
+    /// each repeat, up to KEY_ACCEL_MAX times. Leftover fractions carry to the
+    /// next (keyaccel: macOS's key repeat is slow)
+    export fn held_steps(mut self: &App, t: &string) -> i64 {
+        let sideways: bool = str::eq(*t, "h") || str::eq(*t, "l") || str::eq(*t, "<Left>") ||
+            str::eq(*t, "<Right>");
+
+        if (!sideways || !self.cfg.keyaccel) {
+            self.hold_key = "";
+            return 1;
+        }
+        var ms: i64 = self.key_ms;
+
+        if (ms < 0) { ms = time::since_epoch() / 1ms; }
+        let quick: bool = str::eq(*t, self.hold_key) && ms >= self.hold_ms &&
+            ms - self.hold_ms < 150;
+
+        if (quick) {
+            self.hold_n += 1;
+        } else {
+            self.hold_n = 0;
+            self.hold_rest = 0;
+        }
+        self.hold_key = *t;
+        self.hold_ms = ms;
+        // (hundredths of a step)
+        var speed: i64 = 100;
+
+        if (self.hold_n > 8) { speed = 100 + (self.hold_n - 8) * 10; }
+        if (speed > KEY_ACCEL_MAX * 100) { speed = KEY_ACCEL_MAX * 100; }
+        let total: i64 = speed + self.hold_rest;
+        let steps: i64 = total / 100;
+
+        self.hold_rest = total - steps * 100;
+        return steps;
+    }
+
+    /// scrolls sideways by cols over column x (a terminal's left/right, or
+    /// Shift+wheel): the text, a sheet's columns, or a diagram
+    export fn hwheel(mut self: &App, x: i64, cols: i64) -> void {
+        if (self.split.at > 0 && x < self.split.at) {
+            return;
+        }
+        if (self.viewing()) {
+            self.pan_by(cols, 0);
+            return;
+        }
+        if (self.sheet_on()) {
+            // (a column per four cells: the view, and the cursor with it)
+            if ((cols > 0) != (self.sheet_rest > 0) && self.sheet_rest != 0) {
+                self.sheet_rest = 0;
+            }
+            self.sheet_rest += cols;
+            let n: i64 = self.sheet_rest / 4;
+
+            self.sheet_rest -= n * 4;
+            if (n == 0) {
+                return;
+            }
+            var sh: Sheet = self.b.sheet.pop();
+            var l: i64 = sh.left + n;
+
+            if (l < 0) { l = 0; }
+            if (l > sh.grid_cols() - 1) { l = sh.grid_cols() - 1; }
+            sh.c += l - sh.left;
+            sh.left = l;
+            sh.clamp();
+            self.b.sheet.push(sh);
+            return;
+        }
+        // text: up to its widest line on screen
+        var widest: i64 = 0;
+
+        for (let vl: &self::&VisLine in &self.vis) {
+            let w: i64 = col_of(&vl.text, vl.text.len, self.b.tabstop);
+
+            if (w > widest) { widest = w; }
+        }
+        let tw: i64 = self.edit_w - self.gutter;
+        var l: i64 = self.b.left + cols;
+
+        if (l > widest - tw / 2) { l = widest - tw / 2; }
+        if (l < 0) { l = 0; }
+        self.b.left = l;
+    }
+
     // ---- painting: what the next frame shows ------------------------------------------
 
     // highlights of lines hl_from.. (and the state after each), while buffer,
