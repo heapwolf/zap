@@ -1129,3 +1129,89 @@ fn find_on(t: &string, s: string) -> (i64, i64) {
     }
     return 0;
 }
+
+#test fn held_keys_speed_up() -> i32 {
+    var a: App = setup("hold");
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("notes/HOSTED.md");
+    type_keys(mut &ui, mut &a, "jj");           // "Today an Aela program owns its process."
+    // held: 30 ms apart; one per key at first, then faster
+    var ms: i64 = 1000;
+
+    for (let k: i64 in 0..9) {
+        a.key_ms = ms;
+        type_keys(mut &ui, mut &a, "l");
+        ms += 30;
+    }
+    if (a.b.cx != 9) {
+        return 1;
+    }
+
+    for (let k: i64 in 0..20) {
+        a.key_ms = ms;
+        type_keys(mut &ui, mut &a, "l");
+        ms += 30;
+    }
+    if (a.b.cx <= 29) {
+        return 2;
+    }
+    // released, then pressed again: one at a time
+    let at: i64 = a.b.cx;
+
+    a.key_ms = ms + 500;
+    type_keys(mut &ui, mut &a, "<Left>");
+    if (a.b.cx != at - 1) {
+        return 3;
+    }
+    // a count is still a count; and with accel off, never more than one
+    a.key_ms = ms + 520;
+    type_keys(mut &ui, mut &a, "0");
+    a.ex("set nokeyaccel");
+    ms += 1000;
+
+    for (let k: i64 in 0..20) {
+        a.key_ms = ms;
+        type_keys(mut &ui, mut &a, "l");
+        ms += 30;
+    }
+    if (a.b.cx != 20) {
+        return 4;
+    }
+    return 0;
+}
+
+#test fn highlights_follow_edits() -> i32 {
+    var a: App = setup("hlcache");
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("main.ae");
+    shot(mut &ui, mut &a);
+    let kw: Group = a.vis[0].hls[0].g;
+
+    if (kw == Group::Comment) {
+        return 1;
+    }
+    // a frame that only moves the cursor: highlights unchanged
+    type_keys(mut &ui, mut &a, "jl");
+    shot(mut &ui, mut &a);
+    if (a.vis[0].hls[0].g != kw) {
+        return 2;
+    }
+    // a comment opened above: the following lines are in it (cache invalidated)
+    type_keys(mut &ui, mut &a, "ggO/*<Esc>");
+    shot(mut &ui, mut &a);
+    if (a.vis[1].hls.len == 0 || a.vis[1].hls[0].g != Group::Comment) {
+        return 3;
+    }
+    type_keys(mut &ui, mut &a, "u");
+    shot(mut &ui, mut &a);
+    if (a.vis[0].hls[0].g != kw) {
+        return 4;
+    }
+    return 0;
+}
+
+#test fn git_signs() -> i32 {
+    var a: App = setup("gitsigns");
+    let d: string = a.cwd;
