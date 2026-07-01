@@ -1130,6 +1130,114 @@ fn find_on(t: &string, s: string) -> (i64, i64) {
     return 0;
 }
 
+#test fn palette_from_any_mode() -> i32 {
+    var a: App = setup("palmodes");
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("main.ae");
+    // insert mode: exited as Esc would (text kept, one change), then the palette
+    type_keys(mut &ui, mut &a, "Oxy<C-k>");
+    if (a.picking.len == 0 || a.mode != Mode::Normal || !str::eq(a.b.text.get(0), "xy")) {
+        return 1;
+    }
+    type_keys(mut &ui, mut &a, "<Esc>u");
+    if (str::eq(a.b.text.get(0), "xy")) {
+        return 2;
+    }
+    // a selection: cleared, the palette up
+    type_keys(mut &ui, mut &a, "vj<C-k>");
+    if (a.picking.len == 0 || a.mode != Mode::Normal) {
+        return 3;
+    }
+    type_keys(mut &ui, mut &a, "<Esc>");
+    // the tree, and normal mode
+    type_keys(mut &ui, mut &a, "<C-w>h<C-k>");
+    if (a.picking.len == 0) {
+        return 4;
+    }
+    type_keys(mut &ui, mut &a, "<Esc><C-w>l<C-k>");
+    if (a.picking.len == 0) {
+        return 5;
+    }
+    return 0;
+}
+
+#test fn tildes_past_the_end() -> i32 {
+    var a: App = setup("tildes");
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("main.ae");
+    // three lines: row 3 is past the end, a ~ after the tree
+    var t: string = shot(mut &ui, mut &a);
+
+    if (!str::contains(row(&t, 4), "~")) {
+        return 1;
+    }
+    a.ex("set notildes");
+    t = shot(mut &ui, mut &a);
+    if (str::contains(row(&t, 4), "~")) {
+        return 2;
+    }
+    if (a.cfg.tildes) {
+        return 3;
+    }
+    return 0;
+}
+
+#test fn bang_without_a_shell() -> i32 {
+    var a: App = setup("bang");
+    var ui = tui::headless(70, 12, view::view);
+    let root: string = a.cwd;
+
+    // cd and pwd are zap's own everywhere: its directory, the tree's root
+    a.ex("! cd notes");
+    if (!str::eq(a.cwd, "\(root)/notes") || !str::eq(a.tree.root, "\(root)/notes")) {
+        return 1;
+    }
+    a.ex("cd -");
+    if (!str::eq(a.cwd, root)) {
+        return 2;
+    }
+    a.ex("cd nowhere");
+    if (!str::eq(a.cwd, root)) {
+        return 3;
+    }
+    // as on AeOS: no shell, zap's own commands via std/fs
+    a.shell_off = true;
+    a.ex("! mkdir sub");
+    a.ex("! touch sub/one.txt");
+    a.ex("! echo hi there");
+    if (a.panel.len != 1 || !str::eq(a.panel[0], "hi there")) {
+        return 4;
+    }
+    a.ex("! ls sub");
+    if (a.panel.len != 1 || !str::eq(a.panel[0], "one.txt")) {
+        return 5;
+    }
+    a.ex("! mv sub/one.txt 'sub/two words.txt'");
+    a.ex("! ls sub");
+    if (a.panel.len != 1 || !str::eq(a.panel[0], "two words.txt")) {
+        return 6;
+    }
+    a.ex("! cp README.md sub");
+    a.ex("! cat sub/README.md");
+    if (a.panel.len != 1 || !str::eq(a.panel[0], "readme")) {
+        return 7;
+    }
+    a.ex("! rm sub/README.md \"sub/two words.txt\"");
+    a.ex("! ls sub");
+    if (a.panel.len != 0) {
+        return 8;
+    }
+    a.ex("! rm sub");
+    // anything else: what there is
+    a.ex("! make");
+    if (!str::contains(a.msg, "no shell here")) {
+        return 9;
+    }
+    return 0;
+}
+
 #test fn held_keys_speed_up() -> i32 {
     var a: App = setup("hold");
     var ui = tui::headless(70, 12, view::view);
