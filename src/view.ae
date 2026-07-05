@@ -157,6 +157,62 @@ impl EditPane(A) as Node(A) {
                     var a: i64 = vl.sel_lo - self.left;
                     var e: i64 = vl.sel_hi - self.left;
 
+                    if (a < 0) { a = 0; }
+                    if (e > w) { e = w; }
+                    if (e > a) {
+                        f.tint(Rect { x: x0 + a, y: row, w: e - a, h: 1 }, &self.look.visual);
+                    }
+                }
+            }
+        }
+        // the intro, centered in the text area (the logo dropped if it does not fit)
+        var first: i64 = 0;
+
+        if (self.intro.len > area.h) { first = self.intro.len - area.h; }
+        if (first > 0 && first < LOGO_LINES) { first = LOGO_LINES; }
+        let h: i64 = self.intro.len - first;
+
+        if (h > 0 && h <= area.h) {
+            let top: i64 = area.y + (area.h - h) / 2;
+
+            for (let k: i64 in first..self.intro.len) {
+                let spans: &self::&tui::Span[] = &self.intro[k];
+                var lw: i64 = 0;
+
+                for (let sp: &spans::&tui::Span in spans) { lw += tui::width(sp.text); }
+                var x: i64 = x0 + (w - lw) / 2;
+
+                if (x < x0) { x = x0; }
+                let y: i64 = top + k - first;
+
+                for (let sp: &spans::&tui::Span in spans) {
+                    let st: tui::Style = tui::merge(&self.look.normal, &sp.style);
+
+                    x += f.text(x, y, sp.text, &st, x0 + w - x);
+                }
+            }
+        }
+
+        if (self.cy >= 0 && self.cy < area.h && self.cx >= 0 && self.cx < w) {
+            if (self.ghost.len > 0) {
+                var gst: tui::Style = tui::merge(&self.look.normal, &self.look.syn[1]);
+
+                gst.dim = true;
+                gst.italic = false;
+                f.text(x0 + self.cx, area.y + self.cy, self.ghost, &gst, w - self.cx);
+            }
+            f.cursor(x0 + self.cx, area.y + self.cy);
+        }
+    }
+}
+
+/// a mermaid diagram's window: a bar (what it is, the keys), then the
+/// drawing's rows, each cell colored by kind (the theme's syntax colors)
+export struct DiagramPane(A) {
+    export vis: DiagramVis;
+    export look: Look;
+}
+
 // draws a line's text from column left, w cells, at (x0, y): highlight
 // pens, search matches over them, tabs expanded to the stops
 fn line(
