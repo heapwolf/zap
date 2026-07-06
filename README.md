@@ -129,3 +129,39 @@ directory, which is the tree root, where commands run, and what the palette
 lists. On AeOS, which has no `sh` (programs can't start others), `:!` runs
 zap's own `ls cat mkdir rm mv cp echo touch`, on `std/fs` (`@NAME/...`:
 another program's space).
+
+## How it works
+
+* **The memline** (`src/memline.ae`). Opening a file scans it once, 64 KB
+  at a time, to split it into chunks of about 8 KB of whole lines; no text
+  is kept. A chunk is loaded (`fs::read_at`) on first access, and at most
+  `resident` chunks (64) stay in memory, evicted least recently used first.
+  An evicted changed chunk is appended to a swap file in
+  `~/.local/state/zap/swap/` and reloaded from there; a chunk over 512
+  lines is split. Writes go chunk by chunk to `file.zap-new` (or, if its
+  directory is not writable, to `~/.local/state/zap/new/`), then copied
+  over the file: it keeps its inode, permissions, owner, links and
+  symlinks, and a failed write says where the new text is. A file changed
+  on disk since it was read is not overwritten without `:w!`. If a chunk
+  can't be reloaded (the file changed or was deleted), the buffer says so
+  and refuses to write.
+* **The undo tree** (`src/undo.ae`). Each change records the lines it
+  replaced, inserted or deleted (old and new) and becomes a state, a child
+  of the state it was made in. Undo goes to the parent; a change after an
+  undo starts a branch, keeping the old one. `g-` `g+` and `:earlier`
+  `:later` reach any state via their nearest common ancestor. Each write
+  saves the tree to `~/.local/state/zap/undo/` with the file's size and
+  mtime; reopening the unchanged file restores it. A 110 MB file opens in
+  about 0.1 s and stays around 10 MB of memory through `G`, a search and an
+  edit.
+* **Only what is on screen.** Before each frame, `App.prepare` loads and
+  highlights the visible lines and tree rows, and the frame paints only
+  those (`std/tui` then writes only changed cells). Highlighting is one
+  lexer per language, a line at a time; the state each line starts in
+  (inside a comment, a code fence) is cached every 64 lines. When the view
+  jumps past known states, the window is painted at once with a guess, the
+  states are computed in the background (4096 lines per step between
+  events), and it is repainted.
+* **The loop is async** (`src/main.ae`): a `select` over terminal events,
+  the running command's output (a pipe in the event loop, so the editor
+  never waits on a tool) and background work.
