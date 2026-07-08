@@ -1,0 +1,94 @@
+//! git signs: per-line marks in the gutter's first column for what changed
+//! since the file's last commit. The committed text comes from git (`git
+//! show HEAD:./file`, in the background: editor.ae); zap diffs line hashes
+//! itself, again on each change: the common prefix and suffix are trimmed,
+//! then Myers's diff runs on the rest (if the rewrite is too large for it,
+//! the rest is marked changed).
+
+/// a line's mark: none, added, changed, lines removed after it, lines
+/// removed before it (only on the first line: removed at the top)
+export let NONE: i64 = 0;
+export let ADD: i64 = 1;
+export let CHANGE: i64 = 2;
+export let DELETE: i64 = 3;
+export let DELETE_TOP: i64 = 4;
+
+// max edits Myers's diff searches for (memory grows with its square)
+let MAX_EDITS: i64 = 400;
+
+/// line hashes (what the diff compares)
+export fn hashes(lines: &string[]) -> i64[] {
+    var out: i64[] = [];
+
+    for (let l: string in lines) { out.push(std::hash(l)); }
+    return out;
+}
+
+/// the mark for each line of cur, an edit of base (both as hashes)
+export fn signs(base: &i64[], cur: &i64[]) -> i64[] {
+    var out: i64[] = [];
+
+    for (let k: i64 in 0..cur.len) { out.push(NONE); }
+    // trim the common prefix and suffix
+    var lo: i64 = 0;
+
+    while (lo < base.len && lo < cur.len && base[lo] == cur[lo]) { lo += 1; }
+    var ahi: i64 = base.len;
+    var bhi: i64 = cur.len;
+
+    while (ahi > lo && bhi > lo && base[ahi - 1] == cur[bhi - 1]) {
+        ahi -= 1;
+        bhi -= 1;
+    }
+    if (ahi == lo && bhi == lo) {
+        return out;
+    }
+    // which cur lines were inserted, and how many lines were removed before each
+    var ins: bool[] = [];
+    var dels: i64[] = [];
+
+    for (let k: i64 in 0..(bhi - lo + 1)) {
+        ins.push(false);
+        dels.push(0);
+    }
+    if (!myers(base, lo, ahi, cur, lo, bhi, mut &ins, mut &dels)) {
+        // (too many edits: the whole middle is one change)
+        for (let k: i64 in 0..(bhi - lo)) { ins[k] = true; }
+
+        for (let k: i64 in 0..(bhi - lo + 1)) { dels[k] = 0; }
+        dels[0] = ahi - lo;
+    }
+    mark(&ins, &dels, lo, mut &out);
+    return out;
+}
+
+// a diff's marks: at each place, the lines inserted there and the lines
+// removed there or among them; if both, that many are changed (the rest
+// added); if only removed, the line before is marked
+fn mark(ins: &bool[], dels: &i64[], lo: i64, mut out: &i64[]) -> void {
+    let m: i64 = ins.len - 1;
+    var p: i64 = 0;
+
+    while (p <= m) {
+        var r: i64 = 0;
+
+        while (p + r < m && ins[p + r]) { r += 1; }
+        var gone: i64 = 0;
+
+        for (let q: i64 in p..(p + r + 1)) { gone += dels[q]; }
+        if (r > 0) {
+            for (let k: i64 in 0..r) {
+                if (k < gone) { out[lo + p + k] = CHANGE; } else { out[lo + p + k] = ADD; }
+            }
+        } else if (gone > 0 && out.len > 0) {
+            let at: i64 = lo + p;
+
+            if (at == 0) {
+                if (out[0] == NONE) { out[0] = DELETE_TOP; }
+            } else if (out[at - 1] == NONE) {
+                out[at - 1] = DELETE;
+            }
+        }
+        p += r + 1;
+    }
+}
