@@ -5434,6 +5434,64 @@ impl App {
         let w: string = self.b.word();
         var out: string[] = [];
 
+        for (let x: string in words) {
+            var s: string = x;
+
+            s = str::replace(s, "%:h", path::dir(p));
+            s = str::replace(s, "%:r", path::join(path::dir(p), path::stem(p)));
+            s = str::replace(s, "%:t", path::base(p));
+            s = str::replace(s, "%", p);
+            s = str::replace(s, "<cword>", w);
+            s = str::replace(s, "<cwd>", self.cwd);
+            out.push(s);
+        }
+        return out;
+    }
+
+    // ---- git signs ------------------------------------------------------------------------
+
+    // asks git for the current buffer's committed text, in the background
+    // (again only if force or 2 s passed; never on AeOS, which has no git,
+    // or for a buffer with no file)
+    fn git_fetch(mut self: &App, force: bool) -> void {
+        if (!self.cfg.gitsigns || self.b.path.len == 0 || self.b.scratch || !self.has_shell()) {
+            return;
+        }
+        let now: i64 = time::since_epoch() / 1ms;
+
+        if (!force && self.b.git_asked > 0 && now - self.b.git_asked < 2000) {
+            return;
+        }
+
+        for (let g: &self::&GitAsk in &self.gits) {
+            if (g.id == self.b.id) {
+                return;
+            }
+        }
+        self.b.git_asked = now;
+        let out: string = "\(fs::temp_dir())/zap-git-\(process::id())-\(self.b.id)";
+        let cmd: process::Command = process::Command {
+            program: "sh",
+            args: [
+                "-c", "exec git -C \"$1\" show \"HEAD:./$2\" > \"$3\" 2>/dev/null", "sh",
+                path::dir(self.b.path), path::base(self.b.path), out
+            ],
+            cwd: path::dir(self.b.path), stdin: process::Stdio::Null, stdout: process::Stdio::Null,
+            stderr: process::Stdio::Null
+        };
+
+        match (process::start(&cmd)) {
+            child => {
+                var g: GitAsk = GitAsk { id: self.b.id, out: out };
+
+                g.child.push(child);
+                self.gits.push(g);
+            },
+            e: process::NotFound => {}, e2: process::PermissionDenied => {},
+            e3: process::SpawnError => {}
+        }
+    }
+
     // runs :! cmd itself if it can -> did it? Always cd and pwd (a shell's cd
     // would change only its own directory); with no shell, also these, via
     // std/fs: ls cat mkdir rm mv cp echo touch
