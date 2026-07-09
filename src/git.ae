@@ -92,3 +92,159 @@ fn mark(ins: &bool[], dels: &i64[], lo: i64, mut out: &i64[]) -> void {
         p += r + 1;
     }
 }
+
+// Myers's diff of a[alo..ahi] and b[blo..bhi]: ins[j]: b[blo + j] was
+// inserted; dels[j]: lines of a removed just before it -> found within
+// MAX_EDITS edits?
+fn myers(
+    a: &i64[], alo: i64, ahi: i64, b: &i64[], blo: i64, bhi: i64, mut ins: &bool[],
+    mut dels: &i64[]
+) -> bool {
+    let n: i64 = ahi - alo;
+    let m: i64 = bhi - blo;
+    var cap: i64 = n + m;
+
+    if (cap > MAX_EDITS) { cap = MAX_EDITS; }
+    let off: i64 = cap + 1;
+    // v[k + off]: the furthest x (along a) reached on diagonal k
+    var v: i64[] = [];
+
+    for (let k: i64 in 0..(2 * cap + 3)) { v.push(0); }
+    var trace: i64[][] = [];
+    var found: i64 = -1;
+
+    for (let d: i64 in 0..(cap + 1)) {
+        trace.push(std::copy(v));
+        var k: i64 = -d;
+
+        while (k <= d) {
+            var x: i64 = 0;
+
+            if (k == -d || (k != d && v[k - 1 + off] < v[k + 1 + off])) {
+                x = v[k + 1 + off];
+            } else {
+                x = v[k - 1 + off] + 1;
+            }
+            var y: i64 = x - k;
+
+            while (x < n && y < m && a[alo + x] == b[blo + y]) {
+                x += 1;
+                y += 1;
+            }
+            v[k + off] = x;
+            if (x >= n && y >= m) {
+                found = d;
+                break;
+            }
+            k += 2;
+        }
+        if (found >= 0) { break; }
+    }
+    if (found < 0) {
+        return false;
+    }
+    // walk back from the end: each step is an insertion or a removal
+    var x: i64 = n;
+    var y: i64 = m;
+    var d: i64 = found;
+
+    while (d > 0) {
+        let vd: &trace::&i64[] = &trace[d];
+        let k: i64 = x - y;
+        var pk: i64 = k - 1;
+
+        if (k == -d || (k != d && vd[k - 1 + off] < vd[k + 1 + off])) { pk = k + 1; }
+        let px: i64 = vd[pk + off];
+        let py: i64 = px - pk;
+
+        while (x > px && y > py) {
+            x -= 1;
+            y -= 1;
+        }
+        if (x == px) {
+            ins[py] = true;         // b[py] inserted
+        } else {
+            dels[py] += 1;          // a[px] removed, before b[py]
+        }
+        x = px;
+        y = py;
+        d -= 1;
+    }
+    return true;
+}
+
+// ---- tests ---------------------------------------------------------------------------
+
+fn h(words: string) -> i64[] {
+    var out: i64[] = [];
+
+    for (let k: i64 in 0..words.len) { out.push(words[k] as i64); }
+    return out;
+}
+
+fn same(got: &i64[], want: i64[]) -> bool {
+    if (got.len != want.len) {
+        return false;
+    }
+
+    for (let k: i64 in 0..got.len) {
+        if (got[k] != want[k]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+#test fn marks_changes() -> i32 {
+    // a line per letter
+    if (!same(&signs(&h("abc"), &h("abc")), [0, 0, 0])) {
+        return 1;
+    }
+    if (!same(&signs(&h("abc"), &h("abxc")), [0, 0, ADD, 0])) {
+        return 2;
+    }
+    if (!same(&signs(&h("abc"), &h("axc")), [0, CHANGE, 0])) {
+        return 3;
+    }
+    if (!same(&signs(&h("abcd"), &h("ad")), [DELETE, 0])) {
+        return 4;
+    }
+    if (!same(&signs(&h("abc"), &h("bc")), [DELETE_TOP, 0])) {
+        return 5;
+    }
+    if (!same(&signs(&h("abc"), &h("ab")), [0, DELETE])) {
+        return 6;
+    }
+    // one changed, one more added after it
+    if (!same(&signs(&h("abc"), &h("axyc")), [0, CHANGE, ADD, 0])) {
+        return 7;
+    }
+    // separate edits: marked separately
+    if (!same(&signs(&h("abcdefg"), &h("aXcdeYZfg")), [0, CHANGE, 0, 0, 0, ADD, ADD, 0, 0])) {
+        return 8;
+    }
+    // a new file, and an emptied one
+    if (!same(&signs(&h(""), &h("ab")), [ADD, ADD])) {
+        return 9;
+    }
+    if (!same(&signs(&h("ab"), &h("")), [])) {
+        return 10;
+    }
+    return 0;
+}
+
+#test fn too_many_edits_is_one_change() -> i32 {
+    var a: i64[] = [];
+    var b: i64[] = [];
+
+    for (let k: i64 in 0..1000) {
+        a.push(k);
+        b.push(k + 5000);
+    }
+    let s: i64[] = signs(&a, &b);
+
+    if (s.len != 1000 || s[0] != CHANGE || s[999] != CHANGE) {
+        return 1;
+    }
+    return 0;
+}
