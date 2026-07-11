@@ -5492,6 +5492,107 @@ impl App {
         }
     }
 
+    // takes git's finished answers: each buffer's committed lines
+    fn git_poll(mut self: &App) -> void {
+        var left: GitAsk[] = [];
+
+        while (self.gits.len > 0) {
+            var g: GitAsk = self.gits.pop();
+            var code: i64 = -1;
+
+            match (g.child[0].try_wait()) {
+                r => {
+                    if (let x = r) {
+                        code = 1;
+                        if (x.success()) { code = 0; }
+                    }
+                },
+                e: process::ProcError => { code = 1; }
+            }
+            if (code < 0) {
+                left.push(g);
+                continue;
+            }
+            g.child[0].close();
+            var base: i64[] = [];
+            let tracked: bool = code == 0;
+
+            if (tracked) {
+                let t: string = fs::read_file(g.out) ?? "";
+                var lines: string[] = str::split(t, "\n");
+
+                if (lines.len > 0 && lines[lines.len - 1].len == 0) { lines.pop(); }
+
+                // (as the buffer has them: without a CRLF file's \r)
+                for (let k: i64 in 0..lines.len) {
+                    let l: string = lines[k];
+
+                    if (l.len > 0 && l[l.len - 1] == 13) {
+                        lines[k] = str::substr(l, 0, l.len - 1);
+                    }
+                }
+                base = git::hashes(&lines);
+            }
+            match (fs::remove(g.out)) {
+                v => {}, e: fs::NotFound => {}, e2: fs::PermissionDenied => {},
+                e3: fs::NotEmpty => {},
+                e4: fs::IoError => {}
+            }
+            self.git_take(g.id, tracked, base);
+        }
+        self.gits = left;
+    }
+
+    // sets buffer id's committed lines to base (tracked: it has some)
+    fn git_take(mut self: &App, id: i64, tracked: bool, base: i64[]) -> void {
+        if (self.b.id == id) {
+            take_base(mut &self.b, tracked, base);
+            return;
+        }
+        let at: i64 = self.find_other(id);
+
+        if (at >= 0) { take_base(mut &self.others[at], tracked, base); }
+    }
+
+    // recomputes the current buffer's signs if its text changed (at most
+    // every 150 ms while typing; never for a very long file)
+    fn git_update(mut self: &App) -> void {
+        if (!self.cfg.gitsigns || !self.b.git_tracked || self.b.signs_gen == self.b.gen) {
+            return;
+        }
+        let n: i64 = self.b.text.count;
+
+        if (n > 200000) {
+            return;
+        }
+        let now: i64 = time::since_epoch() / 1ms;
+
+        if (self.b.signs_gen >= 0 && now - self.b.signs_ms < 150) {
+            return;
+        }
+        var cur: i64[] = [];
+
+        for (let i: i64 in 0..n) { cur.push(std::hash(self.b.text.get(i))); }
+        self.b.signs = git::signs(&self.b.git_base, &cur);
+        self.b.signs_gen = self.b.gen;
+        self.b.signs_ms = now;
+    }
+
+    /// anything to recheck soon (git answering, signs to recompute once typing
+    /// pauses)?
+    export fn polling(self: &App) -> bool {
+        return self.gits.len > 0 ||
+            (self.cfg.gitsigns && self.b.git_tracked && self.b.signs_gen != self.b.gen);
+    }
+
+    // ---- :! without a shell ------------------------------------------------------------
+
+    /// can zap start programs here? (not on AeOS: a program can't start
+    /// another; :! has only zap's own commands there)
+    export fn has_shell(self: &App) -> bool {
+        return !self.shell_off && !str::starts_with(process::host_target(), "aeos");
+    }
+
     // runs :! cmd itself if it can -> did it? Always cd and pwd (a shell's cd
     // would change only its own directory); with no shell, also these, via
     // std/fs: ls cat mkdir rm mv cp echo touch
