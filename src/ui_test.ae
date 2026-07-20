@@ -1323,3 +1323,98 @@ fn find_on(t: &string, s: string) -> (i64, i64) {
 #test fn git_signs() -> i32 {
     var a: App = setup("gitsigns");
     let d: string = a.cwd;
+
+    // a repository with main.ae committed
+    // (process::run does not search PATH: go through sh; no git: nothing to test)
+    if (process::run(["/bin/sh", "-c", "command -v git >/dev/null"]) != 0) {
+        return 0;
+    }
+    let id: string = "-c user.email=zap@test -c user.name=zap";
+    let q: string = "cd '\(d)' && rm -rf .git && git init -q && git add main.ae && git \(id) commit -q -m x";
+
+    if (process::run(["/bin/sh", "-c", q]) != 0) {
+        return 10;
+    }
+    var ui = tui::headless(70, 12, view::view);
+
+    a.edit("main.ae");
+    var spins: i64 = 0;
+
+    while (a.polling() && spins < 2000000) {
+        a.prepare();
+        spins += 1;
+    }
+    if (!a.b.git_tracked) {
+        return 1;
+    }
+    shot(mut &ui, mut &a);
+    if (a.vis[0].sign != 0 || a.vis[1].sign != 0) {
+        return 2;
+    }
+    // a line changed, one added, one removed
+    type_keys(mut &ui, mut &a, "ggA // x<Esc>jo  y();<Esc>");
+    a.b.signs_ms = 0;
+    let t: string = shot(mut &ui, mut &a);
+
+    if (a.vis[0].sign != 2 || a.vis[1].sign != 0 || a.vis[2].sign != 1) {
+        return 3;
+    }
+    // (drawn in the gutter's first column, by the tree)
+    if (!str::contains(row(&t, 0), "▎  1 fn main()")) {
+        return 4;
+    }
+    // undo the added line, remove the last one: a mark on the line above it
+    type_keys(mut &ui, mut &a, "ujdd");
+    a.b.signs_ms = 0;
+    let t2: string = shot(mut &ui, mut &a);
+
+    if (a.b.text.count != 2 || a.vis[0].sign != 2 || a.vis[1].sign != 3) {
+        return 5;
+    }
+    if (!str::contains(row(&t2, 1), "▁  2     return 0;")) {
+        return 11;
+    }
+    // off: none
+    a.ex("set nogitsigns");
+    shot(mut &ui, mut &a);
+    if (a.vis[0].sign != 0) {
+        return 6;
+    }
+    // an untracked file: none
+    a.ex("set gitsigns");
+    a.edit("README.md");
+    spins = 0;
+
+    while (a.polling() && spins < 2000000) {
+        a.prepare();
+        spins += 1;
+    }
+    if (a.b.git_tracked) {
+        return 7;
+    }
+    return 0;
+}
+
+#test fn git_sign_colors() -> i32 {
+    var a: App = setup("gitcolors");
+
+    // a theme with no git faces: its string, type and error colors
+    a.ex("theme atelier-forest");
+    let add: string = "\(a.look.git_add.fg)";
+    let change: string = "\(a.look.git_change.fg)";
+    let del: string = "\(a.look.git_delete.fg)";
+
+    if (str::eq(add, change) || str::eq(add, del) || str::eq(change, del)) {
+        return 1;
+    }
+    if (!str::eq(add, "\(a.look.syn[2].fg)")) {                   // string
+        return 2;
+    }
+    // a theme's own git face wins
+    a.cfg.read("(theme \"mine\" :inherit \"paper\" (git.add :fg \"#010203\"))", "<test>");
+    a.ex("theme mine");
+    if (!str::contains("\(a.look.git_add.fg)", "r: 1, g: 2, b: 3")) {
+        return 3;
+    }
+    return 0;
+}
