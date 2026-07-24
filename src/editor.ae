@@ -6305,3 +6305,56 @@ let STARTER: string = """;; zap's configuration (read after the built-in default
 (set number true)
 (set tree-width 30)
 ;; (set theme "ink")
+
+;; keys run ex commands
+(map normal "<leader>w" "w")
+
+;; an add-in: commands that run programs, keys for them, and hooks
+;; (addin "mine"
+;;   (command "lint" :run ("aec" "%" "--check-only" "--message-format" "short") :errors true)
+;;   (on "save" "*.ae" "lint"))
+""";
+
+/// :help
+let HELP: string = """# zap
+
+A terminal editor written in Aela, with Vim's keys. This buffer is
+read-only: move and search as usual, `q` closes it, and `:help word`
+opens it at the section on word.
+
+## Modes
+
+| key              | mode                                                     |
+| ---------------- | -------------------------------------------------------- |
+| `Esc`            | normal: keys are commands                                |
+| `i a I A o O`    | insert: keys are text (before, after, line start, end, below, above) |
+| `v V Ctrl-v`     | visual: select characters, lines, or a block             |
+| `:`              | command line (`Tab` opens a completion menu)             |
+| `/ ?`            | search forward, back                                     |
+
+## Moving
+
+- `h j k l` or arrows; `w b e` and `W B E` by word
+- `0 ^ $` line start, first non-blank, end; `g_` last non-blank
+- `gg G` first and last line (`5G` or `:5`: line 5)
+- `{ }` paragraphs; `%` matching bracket; `H M L` screen top, middle, bottom
+- `f t F T` and a character, `; ,` repeat; `Ctrl-d Ctrl-u Ctrl-f Ctrl-b` by page
+- `Ctrl-e Ctrl-y` scroll; `zz zt zb` cursor line to middle, top, bottom
+- mouse: a click moves the cursor, the wheel scrolls
+
+## Editing
+
+- `x X` a character; `dd cc yy` lines; `D C Y` to line end
+- `d c y > <` plus a motion (`dw`, `c$`, `y}`) or an object (`diw`, `caw`)
+- `s S r ~ J` substitute, substitute line, replace, case, join
+- `p P` put after or before
+- insert mode: `Enter` (keeps indent), `Backspace`, `Del`, arrows,
+  `Ctrl-w` word back, `Ctrl-u` to line start, `Ctrl-r` the register
+
+## Completion
+
+After two characters of a word, a menu of candidates opens, the first
+chosen and the rest of it shown after the cursor: words from the lines
+nearest the cursor, then from other buffers; in Aela files, also the
+declarations `aec outline --deps` finds (add-in command `symbols`, run
+in the background, again after each write).
