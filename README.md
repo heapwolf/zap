@@ -91,6 +91,73 @@ with "Applications in terminal may access clipboard" on).
 
 The leader is `<Space>` (`(set leader "\\")` for Vim's).
 
+## Configuration
+
+`~/.config/zap/init.zap` (or `$XDG_CONFIG_HOME/zap/init.zap`), read after
+the built-in defaults (`:defaults` shows them; `:config` opens yours, with a
+starter if new; `:reload` rereads it).
+
+A **local** `init.zap` (the nearest one in the start directory or above)
+replaces it (`(load "~/.config/zap/init.zap")` inside it loads yours too).
+Config runs programs (hooks), so a local one is read only once trusted:
+`:trust` records its path and text hash in `~/.local/state/zap/trust`; any
+change needs `:trust` again (like nvim's `exrc`). Until then zap says it was
+skipped and uses yours.
+
+One form per declaration:
+
+```lisp
+(set number true)              ; options: :set lists them
+(set tree-width 30)
+(set theme "ink")              ; themes below
+
+(theme "mine" :inherit "paper" ; a theme: faces fall back by name
+  (normal :fg "#202020" :bg "#fbfbf8")      ; tree.dir -> tree -> normal
+  (heading :fg "#0b7285")
+  (search :fg "#ffffff" :bg "#0b7285"))
+
+(map normal "<leader>w" "w")   ; keys run ex commands
+(filetype "jsonc" :ext (".jsonc") :syntax "json" :comment "//") ; :names ("Dockerfile") too
+(special "README.md" "Makefile")
+(load "more.zap")              ; relative to this file
+
+(addin "mine"                  ; an add-in: commands, keys, hooks together
+  (command "lint" :run ("aec" "%" "--check-only" "--message-format" "short")
+    :save true :errors true :show "quiet" :doc "check this file")
+  (on "save" "*.ae" "lint")
+  (map normal "<leader>l" "lint"))
+(disable "aela")               ; turn off an add-in
+```
+
+Themes live in `src/themes/`: **paper** (light, default) and **ink**
+(dark), which the others inherit (`base.ae`); soft **dune**, **mist**
+(light) and **moss** (dark); high-contrast **noon** (light), **coal** and
+**volt** (dark); monochrome **chalk** (light, gray) and **amber** (dark, one
+hue) (`more.ae`). The
+[zenbones](https://github.com/zenbones-theme/zenbones.nvim) family
+(`zenbones.ae`), light and dark: **zenbones**, **zenwritten**,
+**neobones**, **rosebones**, **forestbones**, **tokyobones** and
+**seoulbones** (`-light` / `-dark`, e.g. `zenbones-dark`), **vimbones**
+(light), **nordbones**, **duckbones**, **zenburned** and **kanagawabones**
+(dark). Bram de Haan's
+[Atelier](https://atelierbram.github.io/syntax-highlighting/atelier-schemes/)
+schemes (`atelier.ae`, one template over their base16 palettes), dark and
+light: **atelier-cave**, **-dune**, **-estuary**, **-forest**, **-heath**,
+**-lakeside**, **-plateau**, **-savanna**, **-seaside** and
+**-sulphurpool** (`atelier-cave-light` etc.). `:theme <Tab>` and the
+palette's Themes tab list them. A theme's `visual` face is the selection
+(background only, over the text colors); `menu` and `menu.selected` style
+command line completions.
+
+A filetype's `:syntax` is one of zap's lexers (`aela markdown sexp shell c
+cpp swift js css html python mermaid asm json`), `csv` or `tsv`
+(spreadsheet), or `""` (plain text). Any other name is a config error (the
+files open as plain text). Later `filetype`s win, so init.zap can take over
+a built-in extension.
+
+See `example.zap` for an example. The forms are documented at the top of
+`src/config.ae`; faces in `src/themes/theme.ae`.
+
 ### Add-ins and the Aela tools
 
 Commands run programs in the background (the editor stays usable; the
