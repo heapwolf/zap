@@ -49,6 +49,55 @@ fn on_event(mut ui: &tui::Ui(App), mut app: &App, e: tui::Event) -> void {
                 if (kind == term::MouseKind::ScrollLeft || kind == term_up()) { dir = -2; }
                 let d: i64 = app.wheel_amount(dir, 4, time::since_epoch() / 1ms);
 
+                if (d != 0) { app.hwheel(x, d); }
+            } else if (wheel && !picking) {
+                var dir: i64 = 1;
+
+                if (kind == term_up()) { dir = -1; }
+                let d: i64 = app.wheel_amount(dir, 3, time::since_epoch() / 1ms);
+
+                if (d != 0) { app.wheel(x, d); }
+            } else if (!picking && kind == term::MouseKind::Press && button == term::Button::Left &&
+                app.in_text(x, y)) {
+                app.mouse_press(x - app.edit_x, y, time::since_epoch() / 1ms);
+            } else if (!picking && kind == term::MouseKind::Drag && app.dragging) {
+                app.mouse_drag(x - app.edit_x, y);
+            } else if (kind == term::MouseKind::Release && app.dragging) {
+                app.mouse_release();
+            } else {
+                tui::handle(ui, app, &tui::Event::Mouse {
+                    kind: kind, button: button, x: x, y: y, ctrl: ctrl, alt: alt, shift: shift
+                });
+            }
+        },
+        tui::Event::Resize { cols, rows } => {
+            ui.resize(cols, rows);
+            app.cols = cols;
+            app.rows = rows;
+        },
+        tui::Event::End => { app.quit = true; },
+        tui::Event::Tick => {}
+    }
+}
+
+fn term_up() -> term::MouseKind { return term::MouseKind::ScrollUp; }
+
+fn term_down() -> term::MouseKind { return term::MouseKind::ScrollDown; }
+
+// sets the cursor shape for the mode: a bar while typing, else a block
+fn shape(mut app: &App) -> void {
+    var want: i64 = 2;
+
+    if (app.mode == Mode::Insert || app.mode == Mode::Command || app.mode == Mode::Search) {
+        want = 6;
+    }
+    if (want != app.shape) {
+        if (app.shape < 0 && app.look.cursor.len > 0) { print("\x1b]12;\(app.look.cursor)\x07"); }
+        print("\x1b[\(want) q");
+        app.shape = want;
+    }
+}
+
 async fn main(args: string[]) -> i32 {
     var cwd: string = process::env("PWD");
 
