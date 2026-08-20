@@ -1,0 +1,80 @@
+//! The Atelier themes by Bram de Haan (atelierbram.github.io): ten
+//! schemes, each dark (`atelier-cave`) and light (`atelier-cave-light`),
+//! from their base16 palettes (github.com/tinted-theming/schemes): base00
+//! background, 01 bars and tree, 02 selection, 03 comments and line
+//! numbers, 04 and 05 text, 08 to 0E accents (red errors, orange numbers,
+//! yellow types and search, green strings, cyan escapes and links, blue
+//! functions and headings, purple keywords). Light ones inherit paper, dark
+//! ones ink. All schemes share the faces in TEMPLATE; colors are in SCHEMES.
+
+import str from "std/string";
+
+// one scheme as configuration text, from its name, title, parent theme
+// (ink for dark, paper for light) and base16 colors (in BASES order)
+fn scheme(name: string, title: string, parent: string, c: &string[]) -> string {
+    var t: string = TEMPLATE;
+
+    for (let k: i64, let b: string in &BASES) { t = str::replace(t, "{\(b)}", c[k]); }
+    t = str::replace(t, "{name}", name);
+    t = str::replace(t, "{parent}", parent);
+    return ";; \(name): \(title), base16 (Bram de Haan)\n\(t)\n";
+}
+
+// the base16 colors a scheme lists, in order (06 and 0F unused)
+let BASES: string[] = [
+    "00", "01", "02", "03", "04", "05", "07", "08", "09", "0A", "0B", "0C", "0D", "0E"
+];
+
+// the faces every scheme shares; {name}, {parent} and {00}..{0E} are filled in
+let TEMPLATE: string = """(theme "{name}" :inherit "{parent}"
+  (normal :fg "#{05}" :bg "#{00}")
+  (cursor :bg "#{05}")
+  (gutter :fg "#{03}")
+  (gutter.current :fg "#{05}" :bold true)
+  (gutter.error :fg "#{00}" :bg "#{08}")
+  (tree :fg "#{04}" :bg "#{01}")
+  (tree.root :fg "#{07}" :bold true)
+  (tree.dir :fg "#{05}")
+  (tree.file :fg "#{04}")
+  (tree.special :fg "#{0A}" :italic true)
+  (tree.open :fg "#{07}" :bold true)
+  (tree.cursor :bg "#{02}")
+  (divider :fg "#{02}" :bg "#{01}")
+  (status :fg "#{04}" :bg "#{01}")
+  (status.file :fg "#{07}")
+  (status.info :fg "#{04}")
+  (status.end :fg "#{00}" :bg "#{04}")
+  (status.mode.normal :fg "#{00}" :bg "#{0D}" :bold true)
+  (status.mode.insert :fg "#{00}" :bg "#{0B}" :bold true)
+  (status.mode.command :fg "#{00}" :bg "#{0E}" :bold true)
+  (status.mode.tree :fg "#{00}" :bg "#{0C}" :bold true)
+  (status.mode.visual :fg "#{00}" :bg "#{09}" :bold true)
+  (visual :bg "#{02}")
+  (search :fg "#{00}" :bg "#{0A}")
+  (cmdline :fg "#{05}" :bg "#{00}")
+  (error :fg "#{08}" :bold true)
+  (panel :fg "#{05}" :bg "#{01}")
+  (dialog :fg "#{05}" :bg "#{01}")
+  (menu :fg "#{05}" :bg "#{01}")
+  (menu.selected :fg "#{07}" :bg "#{02}")
+  (menu.match :fg "#{0A}" :bold true)
+  (menu.kind :fg "#{03}")
+  (menu.doc :fg "#{05}" :bg "#{01}")
+  (menu.doc.title :fg "#{07}" :bold true)
+  (menu.border :fg "#{03}")
+  (heading :fg "#{0D}" :bold true)
+  (url :fg "#{0C}" :underline true)
+  (list :fg "#{09}")
+  (code :fg "#{0B}")
+  (quote :fg "#{03}" :italic true)
+  (comment :fg "#{03}" :italic true)
+  (string :fg "#{0B}")
+  (keyword :fg "#{0E}")
+  (type :fg "#{0A}")
+  (number :fg "#{09}")
+  (function :fg "#{0D}")
+  (constant :fg "#{09}")
+  (operator :fg "#{04}")
+  (punct :fg "#{04}")
+  (escape :fg "#{0C}")
+  (error.text :fg "#{08}"))""";
