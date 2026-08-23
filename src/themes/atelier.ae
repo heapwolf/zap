@@ -78,3 +78,84 @@ let TEMPLATE: string = """(theme "{name}" :inherit "{parent}"
   (punct :fg "#{04}")
   (escape :fg "#{0C}")
   (error.text :fg "#{08}"))""";
+
+// the schemes: name, title, parent theme, then colors
+let SCHEMES: string[][] = [
+    ["atelier-cave", "Atelier Cave", "ink",
+        "19171c", "26232a", "585260", "655f6d", "7e7887", "8b8792", "e2dfe7",
+        "be4678", "aa573c", "a06e3b", "2a9292", "398bc6", "576ddb", "955ae7"],
+    ["atelier-cave-light", "Atelier Cave Light", "paper",
+        "efecf4", "e2dfe7", "8b8792", "7e7887", "655f6d", "585260", "26232a",
+        "be4678", "aa573c", "a06e3b", "2a9292", "398bc6", "576ddb", "955ae7"],
+    ["atelier-dune", "Atelier Dune", "ink",
+        "20201d", "292824", "6e6b5e", "7d7a68", "999580", "a6a28c", "e8e4cf",
+        "d73737", "b65611", "ae9513", "60ac39", "1fad83", "6684e1", "b854d4"],
+    ["atelier-dune-light", "Atelier Dune Light", "paper",
+        "fefbec", "e8e4cf", "a6a28c", "999580", "7d7a68", "6e6b5e", "292824",
+        "d73737", "b65611", "ae9513", "60ac39", "1fad83", "6684e1", "b854d4"],
+    ["atelier-estuary", "Atelier Estuary", "ink",
+        "22221b", "302f27", "5f5e4e", "6c6b5a", "878573", "929181", "e7e6df",
+        "ba6236", "ae7313", "a5980d", "7d9726", "5b9d48", "36a166", "5f9182"],
+    ["atelier-estuary-light", "Atelier Estuary Light", "paper",
+        "f4f3ec", "e7e6df", "929181", "878573", "6c6b5a", "5f5e4e", "302f27",
+        "ba6236", "ae7313", "a5980d", "7d9726", "5b9d48", "36a166", "5f9182"],
+    ["atelier-forest", "Atelier Forest", "ink",
+        "1b1918", "2c2421", "68615e", "766e6b", "9c9491", "a8a19f", "e6e2e0",
+        "f22c40", "df5320", "c38418", "7b9726", "3d97b8", "407ee7", "6666ea"],
+    ["atelier-forest-light", "Atelier Forest Light", "paper",
+        "f1efee", "e6e2e0", "a8a19f", "9c9491", "766e6b", "68615e", "2c2421",
+        "f22c40", "df5320", "c38418", "7b9726", "3d97b8", "407ee7", "6666ea"],
+    ["atelier-heath", "Atelier Heath", "ink",
+        "1b181b", "292329", "695d69", "776977", "9e8f9e", "ab9bab", "d8cad8",
+        "ca402b", "a65926", "bb8a35", "918b3b", "159393", "516aec", "7b59c0"],
+    ["atelier-heath-light", "Atelier Heath Light", "paper",
+        "f7f3f7", "d8cad8", "ab9bab", "9e8f9e", "776977", "695d69", "292329",
+        "ca402b", "a65926", "bb8a35", "918b3b", "159393", "516aec", "7b59c0"],
+    ["atelier-lakeside", "Atelier Lakeside", "ink",
+        "161b1d", "1f292e", "516d7b", "5a7b8c", "7195a8", "7ea2b4", "c1e4f6",
+        "d22d72", "935c25", "8a8a0f", "568c3b", "2d8f6f", "257fad", "6b6bb8"],
+    ["atelier-lakeside-light", "Atelier Lakeside Light", "paper",
+        "ebf8ff", "c1e4f6", "7ea2b4", "7195a8", "5a7b8c", "516d7b", "1f292e",
+        "d22d72", "935c25", "8a8a0f", "568c3b", "2d8f6f", "257fad", "6b6bb8"],
+    ["atelier-plateau", "Atelier Plateau", "ink",
+        "1b1818", "292424", "585050", "655d5d", "7e7777", "8a8585", "e7dfdf",
+        "ca4949", "b45a3c", "a06e3b", "4b8b8b", "5485b6", "7272ca", "8464c4"],
+    ["atelier-plateau-light", "Atelier Plateau Light", "paper",
+        "f4ecec", "e7dfdf", "8a8585", "7e7777", "655d5d", "585050", "292424",
+        "ca4949", "b45a3c", "a06e3b", "4b8b8b", "5485b6", "7272ca", "8464c4"],
+    ["atelier-savanna", "Atelier Savanna", "ink",
+        "171c19", "232a25", "526057", "5f6d64", "78877d", "87928a", "dfe7e2",
+        "b16139", "9f713c", "a07e3b", "489963", "1c9aa0", "478c90", "55859b"],
+    ["atelier-savanna-light", "Atelier Savanna Light", "paper",
+        "ecf4ee", "dfe7e2", "87928a", "78877d", "5f6d64", "526057", "232a25",
+        "b16139", "9f713c", "a07e3b", "489963", "1c9aa0", "478c90", "55859b"],
+    ["atelier-seaside", "Atelier Seaside", "ink",
+        "131513", "242924", "5e6e5e", "687d68", "809980", "8ca68c", "cfe8cf",
+        "e6193c", "87711d", "98981b", "29a329", "1999b3", "3d62f5", "ad2bee"],
+    ["atelier-seaside-light", "Atelier Seaside Light", "paper",
+        "f4fbf4", "cfe8cf", "8ca68c", "809980", "687d68", "5e6e5e", "242924",
+        "e6193c", "87711d", "98981b", "29a329", "1999b3", "3d62f5", "ad2bee"],
+    ["atelier-sulphurpool", "Atelier Sulphurpool", "ink",
+        "202746", "293256", "5e6687", "6b7394", "898ea4", "979db4", "dfe2f1",
+        "c94922", "c76b29", "c08b30", "ac9739", "22a2c9", "3d8fd1", "6679cc"],
+    ["atelier-sulphurpool-light", "Atelier Sulphurpool Light", "paper",
+        "f5f7ff", "dfe2f1", "979db4", "898ea4", "6b7394", "5e6687", "293256",
+        "c94922", "c76b29", "c08b30", "ac9739", "22a2c9", "3d8fd1", "6679cc"]
+];
+
+// configuration text for all schemes, in order
+fn all() -> string {
+    var b: str::Builder = str::Builder {};
+
+    for (let s: &SCHEMES::&string[] in &SCHEMES) {
+        var colors: string[] = [];
+
+        for (let k: i64 in 3..s.len) { colors.push(s[k]); }
+        b.add("\n");
+        b.add(scheme(s[0], s[1], s[2], &colors));
+    }
+    return b.to_string();
+}
+
+/// the themes, as configuration text (read after the defaults)
+export let ATELIER: string = all();
