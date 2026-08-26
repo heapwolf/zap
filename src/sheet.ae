@@ -1,0 +1,117 @@
+//! zap's spreadsheet: a CSV (or TSV) buffer shown and edited as a grid, like
+//! sc. The buffer holds the file's text; the sheet is reparsed whenever it
+//! changes (Buf.gen), and a cell edit edits its record's lines, so undo, :w
+//! and the swap file work on the text.
+//!
+//! A cell starting with = is a formula: numbers, "text", cells (B3, $B$3),
+//! + - * / ^ & (joins text), = <> < > <= >= (1 or 0), ( ), and functions
+//! (SUM AVERAGE AVG MIN MAX COUNT COUNTA ABS ROUND INT SQRT MOD POW IF AND
+//! OR NOT LEN UPPER LOWER CONCAT), which take ranges (A1:B9). sc's
+//! @sum(...) is SUM(...). Rows count from 1 as shown; a header row is row 1.
+//! Errors show as #REF! #DIV/0! #VALUE! #NAME? #CYCLE! or #ERR!.
+
+import str from "std/string";
+import math from "std/math";
+import tui from "std/tui";
+import { MemLine } from "memline.ae";
+import ml from "memline.ae";
+
+/// a cell's value
+export struct Val {
+    export kind: i64;               // 0 empty, 1 number, 2 text, 3 error (text: which)
+    export num: f64 = 0.0;
+    export text: string = "";
+}
+
+fn empty() -> Val { return Val { kind: 0 }; }
+
+fn number(x: f64) -> Val { return Val { kind: 1, num: x }; }
+
+fn text_val(s: string) -> Val { return Val { kind: 2, text: s }; }
+
+fn error(e: string) -> Val { return Val { kind: 3, text: e }; }
+
+/// a cell as the grid shows it
+export struct VisCell {
+    export text: string;
+    export x: i64;                  // pane column, and width
+    export w: i64;
+    export right: bool = false;     // right-aligned (a number)
+    export kind: i64 = 0;           // 0 text, 1 number, 2 error
+    export cur: bool;               // under the cursor
+    export sel: bool;               // selected
+}
+
+/// a row as the grid shows it
+export struct VisRow {
+    export no: string;              // row number
+    export header: bool;
+    export current: bool;           // the cursor's row
+    export sel: bool;               // wholly selected (a row selection)
+    export cells: VisCell[] = [];
+}
+
+/// what the pane shows: the formula bar, the columns' letters, the rows
+export struct SheetVis {
+    export bar: string = "";        // the cursor cell's name and text
+    export gutter: i64 = 0;         // row number width
+    export heads: VisCell[] = [];   // column letters (cur: the cursor's column)
+    export rows: VisRow[] = [];
+}
+
+/// a sheet: the records of a CSV, and the grid's state
+export struct Sheet {
+    export rows: string[][] = [];   // each record's fields, as written (formulas too)
+    export starts: i64[] = [];      // each record's first line, then the line after the last
+    export ncols: i64 = 0;
+    export sep: u8 = 0;             // , ; or tab
+    export gen: i64 = -1;           // buffer gen it was read at
+    export widths: i64[] = [];      // column widths in cells (including the gap after)
+    export r: i64 = 0;              // cursor cell
+    export c: i64 = 0;
+    export top: i64 = 0;            // first row and column shown (below a header row)
+    export left: i64 = 0;
+    export header: bool = false;    // row 1 is a header: bold, pinned at the top
+    export sel: i64 = 0;            // selection from (ar, ac) to the cursor: 0 none,
+    export ar: i64 = 0;             // 1 cells, 2 whole rows, 3 whole columns
+    export ac: i64 = 0;
+    export sized: bool = false;     // widths already fit to the contents
+    vals: Val[] = [];               // computed values (index r * ncols + c)
+    st: i64[] = [];                 // 0 not yet, 1 computing, 2 done
+}
+
+/// max auto-fit column width, and a new column's width
+export let MAX_AUTO: i64 = 40;
+export let DEFAULT_WIDTH: i64 = 10;
+
+/// minimum grid shown: columns A to Z, rows 1 to 256
+export let MIN_COLS: i64 = 26;
+export let MIN_ROWS: i64 = 256;
+
+// ---- CSV ----------------------------------------------------------------------------
+
+/// a CSV's separator, from its first line: whichever of , ; and tab is most
+/// common outside quotes (, if none)
+export fn guess_sep(line: &string) -> u8 {
+    var commas: i64 = 0;
+    var semis: i64 = 0;
+    var tabs: i64 = 0;
+    var quoted: bool = false;
+
+    for (let i: i64 in 0..line.len) {
+        let ch: u8 = line[i];
+
+        if (ch == '"') { quoted = !quoted; }
+        if (quoted) { continue; }
+        if (ch == ',') { commas += 1; }
+        if (ch == ';') { semis += 1; }
+        if (ch == '\t') { tabs += 1; }
+    }
+    if (tabs > commas && tabs >= semis) {
+        return '\t';
+    }
+    if (semis > commas) {
+        return ';';
+    }
+    return ',';
+}
