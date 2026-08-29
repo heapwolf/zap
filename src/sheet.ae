@@ -115,3 +115,113 @@ export fn guess_sep(line: &string) -> u8 {
     }
     return ',';
 }
+
+// does record text leave a quote open (the record continues on the next line)?
+fn quote_open(text: &string, sep: u8) -> bool {
+    var quoted: bool = false;
+    var start: bool = true;         // at a field's start (where a quote opens it)
+    let n: i64 = text.len;
+    var i: i64 = 0;
+
+    while (i < n) {
+        let ch: u8 = text[i];
+
+        if (quoted) {
+            if (ch == '"') {
+                if (i + 1 < n && text[i + 1] == '"') { i += 1; } else { quoted = false; }
+            }
+        } else if (ch == '"' && start) {
+            quoted = true;
+        }
+        start = !quoted && ch == sep;
+        i += 1;
+    }
+    return quoted;
+}
+
+/// a record's fields (split on sep; a field starting with " is quoted up to
+/// its closing ", with "" for a quote; a quote elsewhere is literal)
+export fn fields_of(text: &string, sep: u8) -> string[] {
+    var out: string[] = [];
+    var b: str::Builder;
+    var quoted: bool = false;
+    var start: bool = true;
+    var i: i64 = 0;
+    let n: i64 = text.len;
+
+    while (i < n) {
+        let ch: u8 = text[i];
+
+        if (quoted) {
+            if (ch == '"') {
+                if (i + 1 < n && text[i + 1] == '"') {
+                    b.add_byte('"');
+                    i += 2;
+                    continue;
+                }
+                quoted = false;
+            } else {
+                b.add_byte(ch);
+            }
+            start = false;
+        } else if (ch == '"' && start) {
+            quoted = true;
+            start = false;
+        } else if (ch == sep) {
+            out.push(b.to_string());
+            b.clear();
+            start = true;
+        } else {
+            if (ch != '\r') { b.add_byte(ch); }
+            start = false;
+        }
+        i += 1;
+    }
+    out.push(b.to_string());
+    return out;
+}
+
+/// a field as written in a record: quoted if it has the separator, a quote,
+/// a line break, or a leading or trailing space
+export fn field(s: &string, sep: u8) -> string {
+    let n: i64 = s.len;
+    var quote: bool = n > 0 && (s[0] == ' ' || s[n - 1] == ' ');
+
+    for (let i: i64 in 0..n) {
+        let ch: u8 = s[i];
+
+        if (ch == sep || ch == '"' || ch == '\n' || ch == '\r') { quote = true; }
+    }
+    if (!quote) {
+        return *s;
+    }
+    return "\"\(str::replace(*s, "\"", "\"\""))\"";
+}
+
+/// a record's text from its fields
+export fn record(cells: &string[], sep: u8) -> string {
+    var b: str::Builder;
+
+    for (let k: i64, let s: string in cells) {
+        if (k > 0) { b.add_byte(sep); }
+        b.add(field(&s, sep));
+    }
+    return b.to_string();
+}
+
+/// a column's name: A..Z, AA..
+export fn col_name(c: i64) -> string {
+    var n: i64 = c + 1;
+    var out: string = "";
+
+    while (n > 0) {
+        let d: i64 = (n - 1) % 26;
+
+        out = "\(str::from_char((('A' as i64) + d) as char))\(out)";
+        n = (n - 1) / 26;
+    }
+    return out;
+}
+
+/// a cell's name: B3 (rows from 1)
+export fn cell_name(r: i64, c: i64) -> string { return "\(col_name(c))\(r + 1)"; }
