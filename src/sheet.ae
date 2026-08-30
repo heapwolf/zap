@@ -225,3 +225,111 @@ export fn col_name(c: i64) -> string {
 
 /// a cell's name: B3 (rows from 1)
 export fn cell_name(r: i64, c: i64) -> string { return "\(col_name(c))\(r + 1)"; }
+
+impl Sheet {
+    /// rereads the buffer's text if it changed (per gen), with separator sep
+    /// (0: guess from the first line)
+    export fn sync(mut self: &Sheet, mut text: &MemLine, gen: i64, sep: u8) -> void {
+        if (gen == self.gen) {
+            return;
+        }
+        self.gen = gen;
+        let count: i64 = text.count;
+
+        if (sep != 0) {
+            self.sep = sep;
+        } else if (self.sep == 0) {
+            var first: string = "";
+
+            if (count > 0) { first = text.get(0); }
+            self.sep = guess_sep(&first);
+        }
+        var rows: string[][] = [];
+        var starts: i64[] = [];
+        var i: i64 = 0;
+        var most: i64 = 1;
+
+        while (i < count) {
+            starts.push(i);
+            var rec: string = text.get(i);
+
+            i += 1;
+
+            while (quote_open(&rec, self.sep) && i < count) {
+                rec = "\(rec)\n\(text.get(i))";
+                i += 1;
+            }
+            let f: string[] = fields_of(&rec, self.sep);
+
+            if (f.len > most) { most = f.len; }
+            rows.push(f);
+        }
+        if (rows.len == 0) {
+            rows.push([""]);
+            starts.push(0);
+        }
+        starts.push(i);
+        self.rows = rows;
+        self.starts = starts;
+        self.ncols = most;
+
+        while (self.widths.len < self.grid_cols()) { self.widths.push(DEFAULT_WIDTH); }
+        self.forget();
+        if (!self.sized) {
+            self.sized = true;
+            self.fit_all();
+            self.header = self.looks_like_header();
+        }
+        self.clamp();
+    }
+
+    // drops computed values (the cells changed; rebuilt on the next formula)
+    fn forget(mut self: &Sheet) -> void {
+        self.vals = [];
+        self.st = [];
+    }
+
+    // is the first row a header (2+ rows, and no cell in it a number)?
+    fn looks_like_header(mut self: &Sheet) -> bool {
+        if (self.rows.len < 2) {
+            return false;
+        }
+        var words: i64 = 0;
+
+        for (let s: string in &self.rows[0]) {
+            let t: string = str::trim(s);
+
+            if (t.len == 0) { continue; }
+            if (is_number(&t) || t[0] == '=') {
+                return false;
+            }
+            words += 1;
+        }
+        return words > 0;
+    }
+
+    /// fits each column to its widest cell (in the first 1000 rows), from 3
+    /// to MAX_AUTO
+    export fn fit_all(mut self: &Sheet) -> void {
+        for (let c: i64 in 0..self.ncols) { self.fit(c); }
+    }
+
+    /// fits column c to its widest cell
+    export fn fit(mut self: &Sheet, c: i64) -> void {
+        var w: i64 = 3;
+        var k: i64 = 0;
+
+        while (k < self.rows.len && k < 1000) {
+            if (c < self.rows[k].len) {
+                var t: string = self.rows[k][c];
+
+                if (t.len > 0 && t[0] == '=') { t = self.shown(k, c); }
+                let tw: i64 = tui::width(t);
+
+                if (tw > w) { w = tw; }
+            }
+            k += 1;
+        }
+        if (w > MAX_AUTO) { w = MAX_AUTO; }
+        self.widths[c] = w + 1;
+    }
