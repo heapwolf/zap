@@ -333,3 +333,97 @@ impl Sheet {
         if (w > MAX_AUTO) { w = MAX_AUTO; }
         self.widths[c] = w + 1;
     }
+
+    /// keeps the cursor on a cell (or the empty row and column past the
+    /// last, for typing a new one)
+    export fn clamp(mut self: &Sheet) -> void {
+        if (self.r >= self.grid_rows()) { self.r = self.grid_rows() - 1; }
+        if (self.r < 0) { self.r = 0; }
+        if (self.c >= self.grid_cols()) { self.c = self.grid_cols() - 1; }
+        if (self.c < 0) { self.c = 0; }
+
+        while (self.widths.len < self.grid_cols()) { self.widths.push(DEFAULT_WIDTH); }
+    }
+
+    /// the grid's rows and columns: the sheet's plus one empty past each, at
+    /// least MIN_ROWS by MIN_COLS
+    export fn grid_rows(self: &Sheet) -> i64 {
+        if (self.rows.len + 1 < MIN_ROWS) {
+            return MIN_ROWS;
+        }
+        return self.rows.len + 1;
+    }
+
+    export fn grid_cols(self: &Sheet) -> i64 {
+        if (self.ncols + 1 < MIN_COLS) {
+            return MIN_COLS;
+        }
+        return self.ncols + 1;
+    }
+
+    /// the selection's corners (r1, c1, r2, c2), r1 <= r2, c1 <= c2 (the
+    /// cursor cell if none)
+    export fn sel_range(self: &Sheet) -> (i64, i64, i64, i64) {
+        var r1: i64 = self.r;
+        var r2: i64 = self.r;
+        var c1: i64 = self.c;
+        var c2: i64 = self.c;
+
+        if (self.sel == 0) {
+            return (r1, c1, r2, c2);
+        }
+        if (self.ar < r1) { r1 = self.ar; } else { r2 = self.ar; }
+        if (self.ac < c1) { c1 = self.ac; } else { c2 = self.ac; }
+        if (self.sel == 2) {
+            c1 = 0;
+            c2 = self.grid_cols() - 1;
+        }
+        if (self.sel == 3) {
+            r1 = 0;
+            r2 = self.grid_rows() - 1;
+        }
+        return (r1, c1, r2, c2);
+    }
+
+    /// starts a selection of kind k (1 cells, 2 rows, 3 columns) at the cursor
+    export fn select(mut self: &Sheet, k: i64) -> void {
+        self.sel = k;
+        self.ar = self.r;
+        self.ac = self.c;
+    }
+
+    // sum, average and count of the selection's numbers
+    fn sel_stats(mut self: &Sheet) -> string {
+        let (r1, c1, r2, c2) = self.sel_range();
+        var rb: i64 = r2;
+
+        if (rb >= self.rows.len) { rb = self.rows.len - 1; }
+        var cb: i64 = c2;
+
+        if (cb >= self.ncols) { cb = self.ncols - 1; }
+        var total: f64 = 0.0;
+        var n: i64 = 0;
+
+        for (let r: i64 in r1..(rb + 1)) {
+            for (let c: i64 in c1..(cb + 1)) {
+                let v: Val = self.value(r, c);
+
+                if (v.kind == 1) {
+                    total += v.num;
+                    n += 1;
+                }
+            }
+        }
+        if (n == 0) {
+            return "";
+        }
+        return "sum \(num_text(total))  avg \(num_text(total / (n as f64)))  count \(n)";
+    }
+
+    /// cell (r, c)'s text as written ("" past its record's end)
+    export fn raw(self: &Sheet, r: i64, c: i64) -> string {
+        if (r < 0 || r >= self.rows.len || c < 0 || c >= self.rows[r].len) {
+            return "";
+        }
+        return self.rows[r][c];
+    }
