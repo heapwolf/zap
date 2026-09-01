@@ -427,3 +427,107 @@ impl Sheet {
         }
         return self.rows[r][c];
     }
+
+    /// cell (r, c)'s value (formulas computed, with the cells they need)
+    export fn value(mut self: &Sheet, r: i64, c: i64) -> Val {
+        if (r < 0 || c < 0) {
+            return error("#REF!");
+        }
+        if (r >= self.rows.len || c >= self.ncols) {
+            return empty();
+        }
+        let t: string = self.raw(r, c);
+
+        // (only formulas are cached: the rest is read from the text)
+        if (t.len == 0 || t[0] != '=') {
+            return plain(&t);
+        }
+        if (self.st.len == 0) {
+            let n: i64 = self.rows.len * self.ncols;
+
+            for (let k: i64 in 0..n) {
+                self.vals.push(empty());
+                self.st.push(0);
+            }
+        }
+        let k: i64 = r * self.ncols + c;
+
+        if (self.st[k] == 2) {
+            return std::copy(self.vals[k]);
+        }
+        if (self.st[k] == 1) {
+            return error("#CYCLE!");
+        }
+        self.st[k] = 1;
+        var p: Parser = Parser { s: str::substr(t, 1, t.len - 1) };
+        var v: Val = self.expr(mut &p);
+
+        p.space();
+        if (v.kind != 3 && p.i < p.s.len) { v = error("#ERR!"); }
+        // (a cell in a cycle keeps the cycle's error, not the value set meanwhile)
+        if (self.st[k] == 1) {
+            self.vals[k] = std::copy(v);
+            self.st[k] = 2;
+        }
+        return v;
+    }
+
+    /// cell (r, c) as the grid shows it
+    export fn shown(mut self: &Sheet, r: i64, c: i64) -> string {
+        let t: string = self.raw(r, c);
+
+        if (t.len == 0 || t[0] != '=') {
+            return t;
+        }
+        return val_text(&self.value(r, c));
+    }
+
+    // ---- the grid ---------------------------------------------------------------------
+
+    // data rows in a pane h lines tall (minus the bar, the letters, a header row)
+    fn data_rows(self: &Sheet, h: i64) -> i64 {
+        var n: i64 = h - 2;
+
+        if (self.header) { n -= 1; }
+        if (n < 1) { n = 1; }
+        return n;
+    }
+
+    // the first data row (not a header row)
+    fn first_data(self: &Sheet) -> i64 {
+        if (self.header) {
+            return 1;
+        }
+        return 0;
+    }
+
+    /// row number width
+    export fn gutter(self: &Sheet) -> i64 {
+        var d: i64 = ("\(self.grid_rows())").len;
+
+        if (d < 3) { d = 3; }
+        return d + 1;
+    }
+
+    /// scrolls to keep the cursor in a pane w by h
+    export fn show(mut self: &Sheet, w: i64, h: i64) -> void {
+        let n: i64 = self.data_rows(h);
+        let first: i64 = self.first_data();
+
+        if (self.top < first) { self.top = first; }
+        if (self.r >= first) {
+            if (self.r < self.top) { self.top = self.r; }
+            if (self.r >= self.top + n) { self.top = self.r - n + 1; }
+        }
+        if (self.c < self.left) { self.left = self.c; }
+        // advance left until the columns up to the cursor's fit
+        let room: i64 = w - self.gutter();
+
+        while (self.left < self.c) {
+            var used: i64 = 0;
+
+            for (let k: i64 in self.left..(self.c + 1)) { used += self.widths[k]; }
+            if (used <= room) { break; }
+            self.left += 1;
+        }
+    }
