@@ -531,3 +531,117 @@ impl Sheet {
             self.left += 1;
         }
     }
+
+    /// what a pane w by h shows
+    export fn layout(mut self: &Sheet, w: i64, h: i64) -> SheetVis {
+        self.show(w, h);
+        let g: i64 = self.gutter();
+        var vis: SheetVis = SheetVis { gutter: g };
+        let raw: string = self.raw(self.r, self.c);
+
+        vis.bar = "\(cell_name(self.r, self.c))  \(raw)";
+        if (raw.len > 0 && raw[0] == '=') {
+            vis.bar = "\(vis.bar)  → \(val_text(&self.value(self.r, self.c)))";
+        }
+        if (self.sel != 0) {
+            let (r1, c1, r2, c2) = self.sel_range();
+            var name: string = "\(cell_name(r1, c1)):\(cell_name(r2, c2))";
+
+            if (self.sel == 2) { name = "\(r1 + 1):\(r2 + 1)"; }
+            if (self.sel == 3) { name = "\(col_name(c1)):\(col_name(c2))"; }
+            vis.bar = "\(name)  \(self.sel_stats())";
+        }
+        let (s1, d1, s2, d2) = self.sel_range();
+        // the columns that fit (the last one clipped)
+        var cols: i64[] = [];
+        var xs: i64[] = [];
+        var ws: i64[] = [];
+        var x: i64 = g;
+        var c: i64 = self.left;
+
+        while (c < self.grid_cols() && x < w) {
+            var cw: i64 = self.widths[c];
+
+            if (x + cw > w) { cw = w - x; }
+            cols.push(c);
+            xs.push(x);
+            ws.push(cw);
+            vis.heads.push(VisCell {
+                text: col_name(c), x: x, w: cw, cur: c == self.c,
+                sel: self.sel == 3 && c >= d1 && c <= d2
+            });
+            x += self.widths[c];
+            c += 1;
+        }
+        var order: i64[] = [];
+
+        if (self.header) { order.push(0); }
+        let n: i64 = self.data_rows(h);
+
+        for (let k: i64 in 0..n) {
+            let r: i64 = self.top + k;
+
+            if (r >= self.grid_rows()) { break; }
+            order.push(r);
+        }
+
+        for (let r: i64 in &order) {
+            var row: VisRow = VisRow {
+                no: "\(r + 1)", header: self.header && r == 0, current: r == self.r,
+                sel: self.sel == 2 && r >= s1 && r <= s2
+            };
+
+            for (let j: i64, let cc: i64 in &cols) {
+                let t: string = self.raw(r, cc);
+                var kind: i64 = 0;
+                var shown: string = t;
+                var right: bool = false;
+
+                if (t.len > 0 && t[0] == '=') {
+                    let v: Val = self.value(r, cc);
+
+                    shown = val_text(&v);
+                    if (v.kind == 1) { kind = 1; }
+                    if (v.kind == 3) { kind = 2; }
+                } else if (is_number(&str::trim(t))) {
+                    kind = 1;
+                }
+                right = kind == 1;
+                // (a number too wide for its column shows as #s, like sc)
+                if (kind == 1 && tui::width(shown) > ws[j] - 1) {
+                    shown = str::repeat("#", ws[j] - 1);
+                }
+                row.cells.push(VisCell {
+                    text: shown, x: xs[j], w: ws[j], right: right, kind: kind,
+                    cur: r == self.r && cc == self.c,
+                    sel: self.sel != 0 && r >= s1 && r <= s2 && cc >= d1 && cc <= d2
+                });
+            }
+            vis.rows.push(row);
+        }
+        return vis;
+    }
+
+    /// the cell at (x, y) in a pane w by h (y: 0 the bar, 1 the letters) ->
+    /// (r, c), (-1, -1) if none
+    export fn cell_at(self: &Sheet, x: i64, y: i64, w: i64, h: i64) -> (i64, i64) {
+        let c: i64 = self.col_at(x, w);
+
+        if (c < 0 || y < 2) {
+            return (-1, -1);
+        }
+        var k: i64 = y - 2;
+
+        if (self.header) {
+            if (k == 0) {
+                return (0, c);
+            }
+            k -= 1;
+        }
+        let r: i64 = self.top + k;
+
+        if (r >= self.grid_rows()) {
+            return (-1, -1);
+        }
+        return (r, c);
+    }
