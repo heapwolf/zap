@@ -645,3 +645,110 @@ impl Sheet {
         }
         return (r, c);
     }
+
+    /// the row at pane row y of a pane h tall (-1: none, or the bar or letters)
+    export fn row_at(self: &Sheet, y: i64, h: i64) -> i64 {
+        if (y < 2) {
+            return -1;
+        }
+        var k: i64 = y - 2;
+
+        if (self.header) {
+            if (k == 0) {
+                return 0;
+            }
+            k -= 1;
+        }
+        let r: i64 = self.top + k;
+
+        if (r >= self.grid_rows()) {
+            return -1;
+        }
+        return r;
+    }
+
+    /// the column at pane column x (-1: none)
+    export fn col_at(self: &Sheet, x: i64, w: i64) -> i64 {
+        var at: i64 = self.gutter();
+
+        if (x < at) {
+            return -1;
+        }
+        var c: i64 = self.left;
+
+        while (c < self.grid_cols() && at < w) {
+            if (x < at + self.widths[c]) {
+                return c;
+            }
+            at += self.widths[c];
+            c += 1;
+        }
+        return -1;
+    }
+
+    /// the column whose right edge is at pane column x (or one left of it):
+    /// the one a drag on the letters' row resizes (-1: none)
+    export fn edge_at(self: &Sheet, x: i64, w: i64) -> i64 {
+        var at: i64 = self.gutter();
+        var c: i64 = self.left;
+
+        while (c < self.grid_cols() && at < w) {
+            at += self.widths[c];
+            if (x == at - 1 || x == at) {
+                return c;
+            }
+            c += 1;
+        }
+        return -1;
+    }
+
+    /// column c's left edge on the pane
+    export fn col_x(self: &Sheet, c: i64) -> i64 {
+        var at: i64 = self.gutter();
+
+        for (let k: i64 in self.left..c) { at += self.widths[k]; }
+        return at;
+    }
+
+    /// sets column c's width to w (2 to 200; 2 is one cell plus its gap)
+    export fn set_width(mut self: &Sheet, c: i64, w: i64) -> void {
+        if (c < 0 || c >= self.widths.len) {
+            return;
+        }
+        var ww: i64 = w;
+
+        if (ww < 2) { ww = 2; }
+        if (ww > 200) { ww = 200; }
+        self.widths[c] = ww;
+    }
+
+    /// row r's fields with cell c set to t (padded with empty cells up to c)
+    export fn with_cell(self: &Sheet, r: i64, c: i64, t: string) -> string[] {
+        var cells: string[] = [];
+
+        if (r < self.rows.len) { cells = std::copy(self.rows[r]); }
+
+        while (cells.len <= c) { cells.push(""); }
+        cells[c] = t;
+        return cells;
+    }
+}
+
+// ---- values -------------------------------------------------------------------------
+
+/// is t a number (digits, a sign, a point, an exponent)?
+export fn is_number(t: &string) -> bool {
+    if (t.len == 0) {
+        return false;
+    }
+    let ch: u8 = t[0];
+
+    if (!(ch >= '0' && ch <= '9') && ch != '-' && ch != '+' && ch != '.') {
+        return false;
+    }
+    match (str::parse_float(*t)) {
+        v => { return true; },
+        e: str::BadFloat => { return false; }
+    }
+    return false;
+}
