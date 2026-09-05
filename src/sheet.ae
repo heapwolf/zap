@@ -752,3 +752,108 @@ export fn is_number(t: &string) -> bool {
     }
     return false;
 }
+
+// a cell's value from its text (not a formula)
+fn plain(t: &string) -> Val {
+    let s: string = str::trim(*t);
+
+    if (s.len == 0) {
+        return empty();
+    }
+    if (is_number(&s)) {
+        match (str::parse_float(s)) {
+            v => { return number(v); },
+            e: str::BadFloat => {}
+        }
+    }
+    return text_val(*t);
+}
+
+/// a number as a cell shows it: integers without a point, else at most nine
+/// decimal places
+export fn num_text(x: f64) -> string {
+    if (x != x) {
+        return "#NUM!";
+    }
+    let a: f64 = math::abs_f64(x);
+
+    if (a < 1.0e15 && math::floor(x) == x) {
+        return "\(x as i64)";
+    }
+    if (a >= 1.0e15 || a < 1.0e-9) {
+        return "\(x)";
+    }
+    let r: f64 = math::round(x * 1.0e9) / 1.0e9;
+
+    if (math::floor(r) == r) {
+        return "\(r as i64)";
+    }
+    return "\(r)";
+}
+
+/// a value as a cell shows it
+export fn val_text(v: &Val) -> string {
+    if (v.kind == 1) {
+        return num_text(v.num);
+    }
+    if (v.kind == 0) {
+        return "";
+    }
+    return v.text;
+}
+
+// v as a number (empty: 0; numeric text: its number) -> (it, an error if not a number)
+fn num_of(v: &Val) -> (f64, Val) {
+    if (v.kind == 1) {
+        return (v.num, empty());
+    }
+    if (v.kind == 0) {
+        return (0.0, empty());
+    }
+    if (v.kind == 3) {
+        return (0.0, std::copy(*v));
+    }
+    let t: string = str::trim(v.text);
+
+    if (is_number(&t)) {
+        match (str::parse_float(t)) {
+            x => { return (x, empty()); },
+            e: str::BadFloat => {}
+        }
+    }
+    return (0.0, error("#VALUE!"));
+}
+
+fn truthy(v: &Val) -> bool {
+    if (v.kind == 1) {
+        return v.num != 0.0;
+    }
+    if (v.kind == 2) {
+        return v.text.len > 0 && !str::eq(str::to_upper(v.text), "FALSE");
+    }
+    return false;
+}
+
+// ---- formulas -----------------------------------------------------------------------
+
+// a formula parser: the text and the position in it
+struct Parser {
+    s: string;
+    i: i64 = 0;
+}
+
+impl Parser {
+    fn space(mut self: &Parser) -> void {
+        while (self.i < self.s.len && (self.s[self.i] == ' ' || self.s[self.i] == '\t')) {
+            self.i += 1;
+        }
+    }
+
+    // the next character after spaces (0 at the end)
+    fn peek(mut self: &Parser) -> u8 {
+        self.space();
+        if (self.i >= self.s.len) {
+            return 0;
+        }
+        return self.s[self.i];
+    }
