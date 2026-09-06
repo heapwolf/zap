@@ -1135,3 +1135,59 @@ impl Sheet {
         }
         return self.call(&name, p);
     }
+
+    // a function's arguments, ranges expanded -> (values, whether each came
+    // from a range, ok)
+    fn args(mut self: &Sheet, mut p: &Parser) -> (Val[], bool[], bool) {
+        var vals: Val[] = [];
+        var ranged: bool[] = [];
+
+        if (p.eat(")")) {
+            return (vals, ranged, true);
+        }
+
+        while (true) {
+            let save: i64 = p.i;
+            let (r1, c1) = p.cell();
+
+            if (r1 >= 0 && p.eat(":")) {
+                let (r2, c2) = p.cell();
+
+                if (r2 < 0) {
+                    return (vals, ranged, false);
+                }
+                var ra: i64 = r1;
+                var rb: i64 = r2;
+
+                if (rb < ra) {
+                    ra = r2;
+                    rb = r1;
+                }
+                var ca: i64 = c1;
+                var cb: i64 = c2;
+
+                if (cb < ca) {
+                    ca = c2;
+                    cb = c1;
+                }
+                if (rb >= self.rows.len) { rb = self.rows.len - 1; }
+
+                for (let r: i64 in ra..(rb + 1)) {
+                    for (let c: i64 in ca..(cb + 1)) {
+                        vals.push(self.value(r, c));
+                        ranged.push(true);
+                    }
+                }
+            } else {
+                p.i = save;
+                vals.push(self.expr(p));
+                ranged.push(false);
+            }
+            if (p.eat(",") || p.eat(";")) { continue; }
+            if (p.eat(")")) {
+                return (vals, ranged, true);
+            }
+            return (vals, ranged, false);
+        }
+        return (vals, ranged, false);
+    }
