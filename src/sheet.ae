@@ -960,3 +960,78 @@ impl Sheet {
         }
         return a;
     }
+
+    // & joins text
+    fn join(mut self: &Sheet, mut p: &Parser) -> Val {
+        var a: Val = self.sum(p);
+
+        while (p.peek() == '&') {
+            p.i += 1;
+            let b: Val = self.sum(p);
+
+            if (a.kind == 3) { continue; }
+            if (b.kind == 3) {
+                a = b;
+                continue;
+            }
+            a = text_val("\(val_text(&a))\(val_text(&b))");
+        }
+        return a;
+    }
+
+    // + -
+    fn sum(mut self: &Sheet, mut p: &Parser) -> Val {
+        var a: Val = self.product(p);
+
+        while (p.peek() == '+' || p.peek() == '-') {
+            let op: u8 = p.s[p.i];
+
+            p.i += 1;
+            let b: Val = self.product(p);
+
+            a = arith(&a, &b, op);
+        }
+        return a;
+    }
+
+    // * /
+    fn product(mut self: &Sheet, mut p: &Parser) -> Val {
+        var a: Val = self.power(p);
+
+        while (p.peek() == '*' || p.peek() == '/') {
+            let op: u8 = p.s[p.i];
+
+            p.i += 1;
+            let b: Val = self.power(p);
+
+            a = arith(&a, &b, op);
+        }
+        return a;
+    }
+
+    // ^ (right-associative)
+    fn power(mut self: &Sheet, mut p: &Parser) -> Val {
+        let a: Val = self.unary(p);
+
+        if (p.peek() == '^') {
+            p.i += 1;
+            let b: Val = self.power(p);
+
+            return arith(&a, &b, '^');
+        }
+        return a;
+    }
+
+    fn unary(mut self: &Sheet, mut p: &Parser) -> Val {
+        if (p.peek() == '-') {
+            p.i += 1;
+            let v: Val = self.unary(p);
+
+            return arith(&number(0.0), &v, '-');
+        }
+        if (p.peek() == '+') {
+            p.i += 1;
+            return self.unary(p);
+        }
+        return self.atom(p);
+    }
