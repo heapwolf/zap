@@ -1035,3 +1035,103 @@ impl Sheet {
         }
         return self.atom(p);
     }
+
+    fn atom(mut self: &Sheet, mut p: &Parser) -> Val {
+        let ch: u8 = p.peek();
+
+        if (ch == 0) {
+            return error("#ERR!");
+        }
+        if (ch == '(') {
+            p.i += 1;
+            let v: Val = self.expr(p);
+
+            if (!p.eat(")")) {
+                return error("#ERR!");
+            }
+            return v;
+        }
+        if (ch == '"') {
+            var b: str::Builder;
+            var j: i64 = p.i + 1;
+            let n: i64 = p.s.len;
+
+            while (j < n) {
+                if (p.s[j] == '"') {
+                    if (j + 1 < n && p.s[j + 1] == '"') {
+                        b.add_byte('"');
+                        j += 2;
+                        continue;
+                    }
+                    break;
+                }
+                b.add_byte(p.s[j]);
+                j += 1;
+            }
+            if (j >= n) {
+                return error("#ERR!");
+            }
+            p.i = j + 1;
+            return text_val(b.to_string());
+        }
+        if ((ch >= '0' && ch <= '9') || ch == '.') {
+            var j: i64 = p.i;
+            let n: i64 = p.s.len;
+
+            while (j < n && ((p.s[j] >= '0' && p.s[j] <= '9') || p.s[j] == '.')) { j += 1; }
+            if (j < n && (p.s[j] == 'e' || p.s[j] == 'E')) {
+                var k: i64 = j + 1;
+
+                if (k < n && (p.s[k] == '-' || p.s[k] == '+')) { k += 1; }
+                if (k < n && p.s[k] >= '0' && p.s[k] <= '9') {
+                    j = k;
+
+                    while (j < n && p.s[j] >= '0' && p.s[j] <= '9') { j += 1; }
+                }
+            }
+            let t: string = str::substr(p.s, p.i, j - p.i);
+
+            p.i = j;
+            match (str::parse_float(t)) {
+                x => { return number(x); },
+                e: str::BadFloat => { return error("#ERR!"); }
+            }
+        }
+        // a cell (ranges are only allowed as function arguments)
+        let (r, c) = p.cell();
+
+        if (r >= 0) {
+            if (p.peek() == ':') {
+                return error("#VALUE!");
+            }
+            return self.value(r, c);
+        }
+        // a function: NAME( or sc's @name(
+        var j: i64 = p.i;
+
+        if (j < p.s.len && p.s[j] == '@') { j += 1; }
+        let a: i64 = j;
+
+        while (j < p.s.len && (str::is_ascii_alnum(p.s[j]) || p.s[j] == '_' || p.s[j] == '.')) {
+            j += 1;
+        }
+        if (j == a) {
+            return error("#ERR!");
+        }
+        let name: string = str::to_upper(str::substr(p.s, a, j - a));
+
+        p.i = j;
+        if (str::eq(name, "TRUE")) {
+            return number(1.0);
+        }
+        if (str::eq(name, "FALSE")) {
+            return number(0.0);
+        }
+        if (str::eq(name, "PI") && p.peek() != '(') {
+            return number(3.141592653589793);
+        }
+        if (!p.eat("(")) {
+            return error("#NAME?");
+        }
+        return self.call(&name, p);
+    }
