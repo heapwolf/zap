@@ -857,3 +857,106 @@ impl Parser {
         }
         return self.s[self.i];
     }
+
+    // is t at i? (if so, skips it)
+    fn eat(mut self: &Parser, t: string) -> bool {
+        self.space();
+        if (self.i + t.len <= self.s.len && str::eq(str::substr(self.s, self.i, t.len), t)) {
+            self.i += t.len;
+            return true;
+        }
+        return false;
+    }
+
+    // a cell name at i, ($)letters($)digits -> (r, c), skipping it; (-1, -1) if none
+    fn cell(mut self: &Parser) -> (i64, i64) {
+        self.space();
+        var j: i64 = self.i;
+        let n: i64 = self.s.len;
+
+        if (j < n && self.s[j] == '$') { j += 1; }
+        var c: i64 = 0;
+        var letters: i64 = 0;
+
+        while (j < n && letters < 4) {
+            var ch: u8 = self.s[j];
+
+            if (ch >= 'a' && ch <= 'z') { ch = ch - 32; }
+            if (ch < 'A' || ch > 'Z') { break; }
+            c = c * 26 + ((ch - 'A') as i64) + 1;
+            letters += 1;
+            j += 1;
+        }
+        if (letters == 0) {
+            return (-1, -1);
+        }
+        if (j < n && self.s[j] == '$') { j += 1; }
+        var r: i64 = 0;
+        var digits: i64 = 0;
+
+        while (j < n && self.s[j] >= '0' && self.s[j] <= '9' && digits < 9) {
+            r = r * 10 + ((self.s[j] - '0') as i64);
+            digits += 1;
+            j += 1;
+        }
+        if (digits == 0 || r == 0) {
+            return (-1, -1);
+        }
+        // (not a function's name: SUM2( is not a cell)
+        if (j < n && (self.s[j] == '(' || (self.s[j] >= 'a' && self.s[j] <= 'z') ||
+            (self.s[j] >= 'A' && self.s[j] <= 'Z') || self.s[j] == '_')) {
+            return (-1, -1);
+        }
+        self.i = j;
+        return (r - 1, c - 1);
+    }
+}
+
+impl Sheet {
+    // comparisons (lowest precedence)
+    fn expr(mut self: &Sheet, mut p: &Parser) -> Val {
+        var a: Val = self.join(p);
+
+        while (true) {
+            var op: string = "";
+
+            if (p.eat("<>")) { op = "<>"; }
+            else if (p.eat("<=")) { op = "<="; }
+            else if (p.eat(">=")) { op = ">="; }
+            else if (p.eat("=")) { op = "="; }
+            else if (p.eat("<")) { op = "<"; }
+            else if (p.eat(">")) { op = ">"; }
+            if (op.len == 0) {
+                return a;
+            }
+            let b: Val = self.join(p);
+
+            if (a.kind == 3) { continue; }
+            if (b.kind == 3) {
+                a = b;
+                continue;
+            }
+            var cmp: i64 = 0;
+
+            if ((a.kind == 2 || b.kind == 2) && !(a.kind == 1 && b.kind == 0) &&
+                !(a.kind == 0 && b.kind == 1)) {
+                cmp = str::cmp(str::to_lower(val_text(&a)), str::to_lower(val_text(&b)));
+            } else {
+                let (x, ea) = num_of(&a);
+                let (y, eb) = num_of(&b);
+
+                if (x < y) { cmp = -1; }
+                if (x > y) { cmp = 1; }
+            }
+            var yes: bool = false;
+
+            if (str::eq(op, "=")) { yes = cmp == 0; }
+            if (str::eq(op, "<>")) { yes = cmp != 0; }
+            if (str::eq(op, "<")) { yes = cmp < 0; }
+            if (str::eq(op, ">")) { yes = cmp > 0; }
+            if (str::eq(op, "<=")) { yes = cmp <= 0; }
+            if (str::eq(op, ">=")) { yes = cmp >= 0; }
+            if (yes) { a = number(1.0); } else { a = number(0.0); }
+        }
+        return a;
+    }
