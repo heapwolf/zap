@@ -1191,3 +1191,93 @@ impl Sheet {
         }
         return (vals, ranged, false);
     }
+
+    fn call(mut self: &Sheet, name: &string, mut p: &Parser) -> Val {
+        let (vals, ranged, ok) = self.args(p);
+
+        if (!ok) {
+            return error("#ERR!");
+        }
+        let n: i64 = vals.len;
+
+        // (an argument's error is the result, except for COUNT and IF's untaken branch)
+        if (!str::eq(*name, "COUNT") && !str::eq(*name, "COUNTA") && !str::eq(*name, "IF")) {
+            for (let v: &vals::&Val in &vals) {
+                if (v.kind == 3) {
+                    return std::copy(*v);
+                }
+            }
+        }
+        match (*name) {
+            "SUM" | "AVERAGE" | "AVG" | "MIN" | "MAX" => {
+                var total: f64 = 0.0;
+                var lo: f64 = 0.0;
+                var hi: f64 = 0.0;
+                var count: i64 = 0;
+
+                for (let k: i64, let v: &vals::&Val in &vals) {
+                    // (skip a range's text and empty cells)
+                    if (ranged[k] && v.kind != 1) { continue; }
+                    let (x, e) = num_of(v);
+
+                    if (e.kind == 3) {
+                        return e;
+                    }
+                    if (count == 0 || x < lo) { lo = x; }
+                    if (count == 0 || x > hi) { hi = x; }
+                    total += x;
+                    count += 1;
+                }
+                if (str::eq(*name, "SUM")) {
+                    return number(total);
+                }
+                if (str::eq(*name, "MIN")) {
+                    return number(lo);
+                }
+                if (str::eq(*name, "MAX")) {
+                    return number(hi);
+                }
+                if (count == 0) {
+                    return error("#DIV/0!");
+                }
+                return number(total / (count as f64));
+            },
+            "COUNT" => {
+                var count: i64 = 0;
+
+                for (let v: &vals::&Val in &vals) {
+                    if (v.kind == 1) { count += 1; }
+                }
+                return number(count as f64);
+            },
+            "COUNTA" => {
+                var count: i64 = 0;
+
+                for (let v: &vals::&Val in &vals) {
+                    if (v.kind != 0) { count += 1; }
+                }
+                return number(count as f64);
+            },
+            "IF" => {
+                if (n < 2 || n > 3) {
+                    return error("#ERR!");
+                }
+                if (vals[0].kind == 3) {
+                    return std::copy(vals[0]);
+                }
+                if (truthy(&vals[0])) {
+                    return std::copy(vals[1]);
+                }
+                if (n == 3) {
+                    return std::copy(vals[2]);
+                }
+                return number(0.0);
+            },
+            "AND" | "OR" => {
+                var all: bool = true;
+                var any: bool = false;
+
+                for (let v: &vals::&Val in &vals) {
+                    if (truthy(v)) { any = true; } else { all = false; }
+                }
+                var yes: bool = any;
