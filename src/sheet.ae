@@ -1377,3 +1377,91 @@ impl Sheet {
         return error("#ERR!");
     }
 }
+
+// a op b, as numbers
+fn arith(a: &Val, b: &Val, op: u8) -> Val {
+    if (a.kind == 3) {
+        return std::copy(*a);
+    }
+    if (b.kind == 3) {
+        return std::copy(*b);
+    }
+    let (x, ea) = num_of(a);
+
+    if (ea.kind == 3) {
+        return ea;
+    }
+    let (y, eb) = num_of(b);
+
+    if (eb.kind == 3) {
+        return eb;
+    }
+    if (op == '+') {
+        return number(x + y);
+    }
+    if (op == '-') {
+        return number(x - y);
+    }
+    if (op == '*') {
+        return number(x * y);
+    }
+    if (op == '/') {
+        if (y == 0.0) {
+            return error("#DIV/0!");
+        }
+        return number(x / y);
+    }
+    return number(math::pow(x, y));
+}
+
+// ---- tests --------------------------------------------------------------------------
+
+#test fn reads_and_writes_csv() -> i32 {
+    let f: string[] = fields_of(&"a,\"b,c\",\"say \"\"hi\"\"\",,d", ',');
+
+    if (f.len != 5 || !str::eq(f[1], "b,c") || !str::eq(f[2], "say \"hi\"") || f[3].len != 0) {
+        return 1;
+    }
+    if (!str::eq(record(&f, ','), "a,\"b,c\",\"say \"\"hi\"\"\",,d")) {
+        return 2;
+    }
+    if (!str::eq(field(&" x", ','), "\" x\"") || !str::eq(field(&"a;b", ';'), "\"a;b\"")) {
+        return 3;
+    }
+    if (guess_sep(&"a;b;c") != ';' || guess_sep(&"a\tb") != '\t' ||
+        guess_sep(&"\"x;y\",z") != ',') {
+        return 4;
+    }
+    if (!str::eq(col_name(0), "A") || !str::eq(col_name(25), "Z") || !str::eq(col_name(26), "AA") ||
+        !str::eq(col_name(701), "ZZ") || !str::eq(col_name(702), "AAA")) {
+        return 5;
+    }
+    return 0;
+}
+
+// a sheet from text
+fn sheet_of(text: string) -> Sheet {
+    var m: MemLine = ml::of_text(text);
+    var s: Sheet = Sheet {};
+
+    s.sync(mut &m, 1, 0);
+    return s;
+}
+
+#test fn reads_records_over_lines() -> i32 {
+    var s: Sheet = sheet_of("name,note\nann,\"two\nlines\"\nbo,x\n");
+
+    if (s.rows.len != 3 || s.ncols != 2) {
+        return 1;
+    }
+    if (!str::eq(s.raw(1, 1), "two\nlines") || !str::eq(s.raw(2, 0), "bo")) {
+        return 2;
+    }
+    if (s.starts[1] != 1 || s.starts[2] != 3 || s.starts[3] != 4) {
+        return 3;
+    }
+    if (!s.header) {
+        return 4;
+    }
+    return 0;
+}
