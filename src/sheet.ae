@@ -1465,3 +1465,83 @@ fn sheet_of(text: string) -> Sheet {
     }
     return 0;
 }
+
+#test fn works_out_formulas() -> i32 {
+    var s: Sheet = sheet_of(
+        "item,qty,price,total\npen,2,1.5,=B2*C2\nink,3,2,=B3*C3\n,,,=SUM(D2:D3)\n,,,=@avg(B2:B3)+2^3\n,,,=D4/0\n,,,=A1&\" \"&LEN(A2)\n,,,=D8+1\n,,,\"=IF(D4>5,\"\"big\"\",\"\"small\"\")\"\n,,,\"=ROUND(1/3,2)\"\n,,,=nope(1)\n,,,=1+\n"
+    );
+
+    if (!str::eq(s.shown(1, 3), "3") || !str::eq(s.shown(2, 3), "6")) {
+        return 1;
+    }
+    if (!str::eq(s.shown(3, 3), "9")) {
+        return 2;
+    }
+    if (!str::eq(s.shown(4, 3), "10.5")) {
+        return 3;
+    }
+    if (!str::eq(s.shown(5, 3), "#DIV/0!")) {
+        return 4;
+    }
+    if (!str::eq(s.shown(6, 3), "item 3")) {
+        println("got [\(s.shown(6, 3))] raw [\(s.raw(6, 3))]");
+        return 5;
+    }
+    if (!str::eq(s.shown(7, 3), "#CYCLE!")) {
+        return 6;
+    }
+    if (!str::eq(s.shown(8, 3), "big")) {
+        return 7;
+    }
+    if (!str::eq(s.shown(9, 3), "0.33")) {
+        return 8;
+    }
+    if (!str::eq(s.shown(10, 3), "#NAME?") || !str::eq(s.shown(11, 3), "#ERR!")) {
+        return 9;
+    }
+    return 0;
+}
+
+#test fn lays_out_the_grid() -> i32 {
+    var s: Sheet = sheet_of("a,b\n1,=A2*10\n2,x\n");
+    let v: SheetVis = s.layout(40, 10);
+
+    // the letters, the header row, two rows (plus an empty column and row past them)
+    // (at least A to Z and 256 rows: as many as fit)
+    if (v.heads.len < 3 || !str::eq(v.heads[0].text, "A") || v.rows.len != 8) {
+        return 1;
+    }
+    if (!v.rows[0].header || !str::eq(v.rows[1].cells[1].text, "10") || !v.rows[1].cells[1].right) {
+        return 2;
+    }
+    if (!str::eq(v.bar, "A1  a") || !v.rows[0].cells[0].cur) {
+        return 3;
+    }
+    let (r, c) = s.cell_at(v.heads[1].x, 4, 40, 10);
+
+    if (r != 2 || c != 1) {
+        return 4;
+    }
+    if (s.edge_at(v.heads[0].x + v.heads[0].w - 1, 40) != 0) {
+        return 5;
+    }
+    // a selection: its corners, and its numbers' sum in the bar
+    s.r = 1;
+    s.c = 0;
+    s.select(1);
+    s.r = 2;
+    s.c = 1;
+    let v2: SheetVis = s.layout(40, 10);
+
+    if (!str::starts_with(v2.bar, "A2:B3  sum 13") || !v2.rows[1].cells[1].sel) {
+        println(v2.bar);
+        return 6;
+    }
+    s.select(2);
+    let (r1, c1, r2, c2) = s.sel_range();
+
+    if (r1 != 2 || c1 != 0 || c2 != 25 || r2 != 2) {
+        return 7;
+    }
+    return 0;
+}
