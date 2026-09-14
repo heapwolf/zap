@@ -213,6 +213,87 @@ export struct DiagramPane(A) {
     export look: Look;
 }
 
+                while (i < t.len && gone < skip) {
+                    let j: i64 = next_char(&t, i);
+
+                    gone += tui::width(str::substr(t, i, j - i));
+                    i = j;
+                }
+                t = str::substr(t, i, t.len - i);
+            }
+            f.text(x0, area.y, t, &lk.sheet_bar, area.x + area.w - x0);
+            f.cursor(x0 + cw - skip, area.y);
+        } else {
+            f.text(area.x + 1, area.y, self.vis.bar, &lk.sheet_bar, area.w - 1);
+        }
+        if (area.h < 2) {
+            return;
+        }
+        let g: i64 = self.vis.gutter;
+
+        f.fill(Rect { x: area.x, y: area.y + 1, w: area.w, h: 1 }, &lk.sheet_head);
+
+        for (let h: &self::&VisCell in &self.vis.heads) {
+            var st: tui::Style = std::copy(lk.sheet_head);
+
+            if (h.cur || h.sel) { st = std::copy(lk.sheet_head_current); }
+            let x: i64 = area.x + h.x;
+
+            f.fill(Rect { x: x, y: area.y + 1, w: h.w, h: 1 }, &st);
+            var at: i64 = (h.w - 1 - tui::width(h.text)) / 2;
+
+            if (at < 0) { at = 0; }
+            f.text(x + at, area.y + 1, h.text, &st, h.w - at);
+        }
+        let err: tui::Style = tui::merge(&lk.normal, &lk.syn[19]);
+
+        for (let k: i64, let row: &self::&sheetm::VisRow in &self.vis.rows) {
+            let y: i64 = area.y + 2 + k;
+
+            if (y >= area.y + area.h) { break; }
+            var hs: tui::Style = std::copy(lk.sheet_head);
+
+            if (row.current || row.sel) { hs = std::copy(lk.sheet_head_current); }
+            f.fill(Rect { x: area.x, y: y, w: g, h: 1 }, &hs);
+            let no: string = str::pad_start(row.no, g - 1, ' ');
+
+            f.text(area.x, y, no, &hs, g - 1);
+
+            for (let c: &row::&VisCell in &row.cells) {
+                var st: tui::Style = std::copy(lk.normal);
+
+                if (row.header) { st = std::copy(lk.sheet_header); }
+                if (c.kind == 2) { st = std::copy(err); }
+                let x: i64 = area.x + c.x;
+
+                if (c.sel && !c.cur) {
+                    st = tui::merge(&st, &lk.sheet_sel);
+                    f.fill(Rect { x: x, y: y, w: c.w, h: 1 }, &st);
+                }
+                if (c.cur) {
+                    st = tui::merge(&st, &lk.sheet_cursor);
+                    f.fill(Rect { x: x, y: y, w: c.w, h: 1 }, &st);
+                }
+                let room: i64 = c.w - 1;
+
+                if (room <= 0) { continue; }
+                var tx: i64 = x;
+
+                if (c.right) {
+                    let tw: i64 = tui::width(c.text);
+
+                    if (tw < room) { tx = x + room - tw; }
+                }
+                // (a cell with a line break: its first line and an ellipsis)
+                var t: string = c.text;
+
+                if (let nl = str::find(t, "\n")) { t = "\(str::substr(t, 0, nl))…"; }
+                f.text(tx, y, t, &st, x + room - tx);
+            }
+        }
+    }
+}
+
 // draws a line's text from column left, w cells, at (x0, y): highlight
 // pens, search matches over them, tabs expanded to the stops
 fn line(
