@@ -6156,6 +6156,86 @@ impl App {
         return sh.edge_at(x, w);
     }
 
+    fn sheet_col(self: &App, x: i64, w: i64) -> i64 {
+        let sh: &self::&Sheet = &self.b.sheet[0];
+
+        return sh.col_at(x, w);
+    }
+
+    fn sheet_cell(self: &App, x: i64, y: i64, w: i64, h: i64) -> (i64, i64) {
+        let sh: &self::&Sheet = &self.b.sheet[0];
+
+        return sh.cell_at(x, y, w, h);
+    }
+
+    fn sheet_row(self: &App, y: i64, h: i64) -> i64 {
+        let sh: &self::&Sheet = &self.b.sheet[0];
+
+        return sh.row_at(y, h);
+    }
+
+    fn sheet_range(self: &App) -> (i64, i64, i64, i64) {
+        let sh: &self::&Sheet = &self.b.sheet[0];
+
+        return sh.sel_range();
+    }
+
+    fn sheet_gutter(self: &App) -> i64 {
+        let sh: &self::&Sheet = &self.b.sheet[0];
+
+        return sh.gutter();
+    }
+
+    // starts a selection of kind k (0: none) from the cursor
+    fn sheet_select(mut self: &App, k: i64) -> void {
+        var sh: Sheet = self.b.sheet.pop();
+
+        if (k == 0) { sh.sel = 0; } else { sh.select(k); }
+        self.b.sheet.push(sh);
+    }
+
+    /// command-line prompt (a cell edit: the cell's name)
+    export fn cmd_prompt(self: &App) -> string {
+        if (str::eq(self.cmd_kind, "cell")) {
+            return "\(sheetm::cell_name(self.cell_r, self.cell_c)) = ";
+        }
+        return self.cmd_kind;
+    }
+
+    // separator the file type implies (0: guess)
+    fn sheet_sep(self: &App) -> u8 {
+        if (str::eq(self.b.ft.syntax, "tsv")) {
+            return '\t';
+        }
+        return 0;
+    }
+
+    // rereads the sheet from the text, if the text changed
+    fn sheet_sync(mut self: &App) -> void {
+        var sh: Sheet = self.b.sheet.pop();
+
+        sh.sync(mut &self.b.text, self.b.gen, self.sheet_sep());
+        self.b.sheet.push(sh);
+    }
+
+    // spreadsheet window
+    fn prepare_sheet(mut self: &App) -> void {
+        self.sheet_sync();
+        var sh: Sheet = self.b.sheet.pop();
+
+        self.sheet_vis = sh.layout(self.edit_w, self.edit_h);
+        self.b.sheet.push(sh);
+    }
+
+    // rows the window has for data
+    fn sheet_page(self: &App) -> i64 {
+        var n: i64 = self.edit_h - 2;
+
+        if (self.b.sheet[0].header) { n -= 1; }
+        if (n < 1) { n = 1; }
+        return n;
+    }
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
