@@ -6342,6 +6342,90 @@ impl App {
                 }
                 let w: string = toks[i + 1];
 
+                if (str::eq(w, "d") || str::eq(w, "r")) {
+                    self.yank_rows(r, c1);
+                    self.delete_rows(r, c1);
+                } else if (str::eq(w, "c")) {
+                    for (let k: i64 in 0..c1) { self.delete_col(c); }
+                } else {
+                    return 2;
+                }
+            },
+            "o" | "O" => {
+                var at: i64 = r + 1;
+
+                if (str::eq(t, "O")) { at = r; }
+
+                for (let k: i64 in 0..c1) { self.insert_row(at); }
+                self.sheet_go(at, c);
+            },
+            // sc's ir ic (before) and ar ac (after)
+            "i" | "A" => {
+                if (rest < 1) {
+                    return 0;
+                }
+                let w: string = toks[i + 1];
+                var after: i64 = 0;
+
+                if (str::eq(t, "A")) { after = 1; }
+                if (str::eq(w, "r")) {
+                    for (let k: i64 in 0..c1) { self.insert_row(r + after); }
+                    self.sheet_go(r + after, c);
+                } else if (str::eq(w, "c")) {
+                    for (let k: i64 in 0..c1) { self.insert_col(c + after); }
+                    self.sheet_go(r, c + after);
+                } else {
+                    return 2;
+                }
+            },
+            ">" => { self.sheet_width(c, self.b.sheet[0].widths[c] + c1); },
+            "<lt>" => { self.sheet_width(c, self.b.sheet[0].widths[c] - c1); },
+            "f" => {
+                var sh: Sheet = self.b.sheet.pop();
+
+                sh.fit(c);
+                self.b.sheet.push(sh);
+            },
+            "F" => {
+                var sh: Sheet = self.b.sheet.pop();
+
+                sh.fit_all();
+                self.b.sheet.push(sh);
+            },
+            "u" => {
+                for (let k: i64 in 0..c1) {
+                    if (!self.b.undo_last()) {
+                        self.say("Already at oldest change");
+                        break;
+                    }
+                }
+            },
+            "<C-r>" => {
+                for (let k: i64 in 0..c1) {
+                    if (!self.b.redo_last()) {
+                        self.say("Already at newest change");
+                        break;
+                    }
+                }
+            },
+            "n" => { self.search_next(self.search_fwd); },
+            "N" => { self.search_next(!self.search_fwd); },
+            ":" => { self.start_cmd(":"); },
+            "/" => { self.start_cmd("/"); },
+            "?" => { self.start_cmd("?"); },
+            "q" => {
+                if (self.b.readonly) {
+                    self.ex("bdelete");
+                } else {
+                    return 2;
+                }
+            },
+            "<Esc>" => {},
+            _ => { return 2; }
+        }
+        return 1;
+    }
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
