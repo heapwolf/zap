@@ -6426,6 +6426,112 @@ impl App {
         return 1;
     }
 
+    // moves the cursor to cell (r, c), kept on the sheet
+    fn sheet_go(mut self: &App, r: i64, c: i64) -> void {
+        var sh: Sheet = self.b.sheet.pop();
+
+        sh.r = r;
+        sh.c = c;
+        sh.clamp();
+        self.b.sheet.push(sh);
+    }
+
+    fn sheet_width(mut self: &App, c: i64, w: i64) -> void {
+        var sh: Sheet = self.b.sheet.pop();
+
+        sh.set_width(c, w);
+        self.b.sheet.push(sh);
+    }
+
+    // edits the cursor's cell on the command line, starting with text
+    fn edit_cell(mut self: &App, text: string) -> void {
+        if (self.b.readonly) {
+            self.fail_msg("E21: Cannot make changes, the buffer is read-only");
+            return;
+        }
+        self.cell_r = self.b.sheet[0].r;
+        self.cell_c = self.b.sheet[0].c;
+        self.cmd_kind = "cell";
+        self.cmd.history = [];
+        self.cmd.set(text);
+        self.msg = "";
+        self.mode = Mode::Search;
+    }
+
+    // sets record r's lines to cells (r past the end: adds empty records up to
+    // it), within the current change
+    fn put_record(mut self: &App, r: i64, cells: &string[]) -> void {
+        let sep: u8 = self.b.sheet[0].sep;
+        let n: i64 = self.b.sheet[0].rows.len;
+        let lines: string[] = str::split(sheetm::record(cells, sep), "\n");
+
+        if (r >= n) {
+            var at: i64 = self.b.text.count;
+            var k: i64 = n;
+
+            while (k < r) {
+                self.b.insert_line(at, "");
+                at += 1;
+                k += 1;
+            }
+
+            for (let l: string in &lines) {
+                self.b.insert_line(at, l);
+                at += 1;
+            }
+            return;
+        }
+        let a: i64 = self.b.sheet[0].starts[r];
+        let had: i64 = self.b.sheet[0].starts[r + 1] - a;
+        let want: i64 = lines.len;
+        var k: i64 = 0;
+
+        while (k < had && k < want) {
+            self.b.set_line(a + k, lines[k]);
+            k += 1;
+        }
+
+        while (k < want) {
+            self.b.insert_line(a + k, lines[k]);
+            k += 1;
+        }
+
+        while (k < had) {
+            self.b.remove_line(a + want);
+            k += 1;
+        }
+    }
+
+    /// sets cell (r, c) to text t (one change, undone with u)
+    export fn set_cell(mut self: &App, r: i64, c: i64, t: string) -> void {
+        if (!self.sheet_on()) {
+            return;
+        }
+        self.sheet_sync();
+        if (str::eq(self.sheet_raw(r, c), t)) {
+            return;
+        }
+        self.b.begin();
+        let cells: string[] = self.sheet_with(r, c, t);
+
+        self.put_record(r, &cells);
+        self.b.commit();
+        self.sheet_sync();
+    }
+
+    // bounds of the selection's cells that have text (within the sheet) -> corners
+    fn sel_cells(self: &App) -> (i64, i64, i64, i64) {
+        let (r1, c1, ra, ca) = self.sheet_range();
+        let rows: i64 = self.b.sheet[0].rows.len;
+        let cols: i64 = self.b.sheet[0].ncols;
+        var r2: i64 = ra;
+        var c2: i64 = ca;
+
+        if (r2 >= rows) { r2 = rows - 1; }
+        if (c2 >= cols) { c2 = cols - 1; }
+        return (r1, c1, r2, c2);
+    }
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
