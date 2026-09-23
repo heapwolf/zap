@@ -6532,6 +6532,116 @@ impl App {
         return (r1, c1, r2, c2);
     }
 
+    // yanks the selection to the register (tab between cells, a line per row:
+    // as spreadsheets paste) and to the block p puts in
+    fn yank_sel(mut self: &App) -> void {
+        let (r1, c1, r2, c2) = self.sel_cells();
+        var block: string[][] = [];
+        var b: str::Builder;
+
+        for (let r: i64 in r1..(r2 + 1)) {
+            var row: string[] = [];
+
+            for (let c: i64 in c1..(c2 + 1)) { row.push(self.sheet_raw(r, c)); }
+            b.add(str::join(&row, "\t"));
+            b.add_byte(10);
+            block.push(row);
+        }
+        self.sheet_block = block;
+        self.reg = b.to_string();
+        self.reg_lines = false;
+        self.clip(self.reg);
+        self.say("\((r2 - r1 + 1) * (c2 - c1 + 1)) cells yanked");
+    }
+
+    // empties the selection's cells (one change)
+    fn clear_sel(mut self: &App) -> void {
+        let (r1, c1, r2, c2) = self.sel_cells();
+
+        self.b.begin();
+        var r: i64 = r2;
+
+        while (r >= r1) {
+            var cells: string[] = std::copy(self.b.sheet[0].rows[r]);
+            var changed: bool = false;
+
+            for (let c: i64 in c1..(c2 + 1)) {
+                if (c < cells.len && cells[c].len > 0) {
+                    cells[c] = "";
+                    changed = true;
+                }
+            }
+            if (changed) { self.put_record(r, &cells); }
+            r -= 1;
+        }
+        self.b.commit();
+        self.sheet_sync();
+    }
+
+    // pastes the yanked block at the cursor, over the cells there (one change)
+    fn paste_block(mut self: &App) -> void {
+        let r0: i64 = self.b.sheet[0].r;
+        let c0: i64 = self.b.sheet[0].c;
+        let block: string[][] = std::copy(self.sheet_block);
+
+        self.b.begin();
+
+        for (let i: i64, let row: string[] in &block) {
+            var cells: string[] = self.sheet_with(r0 + i, c0, row[0]);
+
+            for (let j: i64, let t: string in &row) {
+                while (cells.len <= c0 + j) { cells.push(""); }
+                cells[c0 + j] = t;
+            }
+            self.put_record(r0 + i, &cells);
+            // (reread the next record's lines: this one may have changed line count)
+            self.sheet_sync();
+        }
+        self.b.commit();
+        self.sheet_sync();
+    }
+
+    // block's text, as yank_sel put it in the register
+    fn block_text(self: &App) -> string {
+        var b: str::Builder;
+
+        for (let row: &self::&string[] in &self.sheet_block) {
+            b.add(str::join(row, "\t"));
+            b.add_byte(10);
+        }
+        return b.to_string();
+    }
+
+    // yanks the cursor's cell to the register (and the clipboard)
+    fn yank_cell(mut self: &App) -> void {
+        let t: string = self.sheet_raw(self.b.sheet[0].r, self.b.sheet[0].c);
+
+        self.sheet_block = [];
+        self.reg = t;
+        self.reg_lines = false;
+        self.clip(t);
+    }
+
+    // yanks n rows from r to the register, as the file has them (line-wise)
+    fn yank_rows(mut self: &App, r: i64, n: i64) -> void {
+        let rows: i64 = self.b.sheet[0].rows.len;
+        var e: i64 = r + n;
+
+        if (e > rows) { e = rows; }
+        let a: i64 = self.b.sheet[0].starts[r];
+        let z: i64 = self.b.sheet[0].starts[e];
+        var b: str::Builder;
+
+        for (let k: i64 in a..z) {
+            b.add(self.b.text.get(k));
+            b.add_byte(10);
+        }
+        self.reg = b.to_string();
+        self.reg_lines = true;
+        self.clip(self.reg);
+        if (e - r > 1) { self.say("\(e - r) rows yanked"); }
+    }
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
