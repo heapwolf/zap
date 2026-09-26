@@ -6642,6 +6642,104 @@ impl App {
         if (e - r > 1) { self.say("\(e - r) rows yanked"); }
     }
 
+    // deletes n rows from r
+    fn delete_rows(mut self: &App, r: i64, n: i64) -> void {
+        let rows: i64 = self.b.sheet[0].rows.len;
+        var e: i64 = r + n;
+
+        if (e > rows) { e = rows; }
+        let a: i64 = self.b.sheet[0].starts[r];
+        let z: i64 = self.b.sheet[0].starts[e];
+
+        self.b.begin();
+
+        for (let k: i64 in a..z) { self.b.remove_line(a); }
+        self.b.commit();
+        self.sheet_sync();
+    }
+
+    // inserts an empty row at r (shifting rows from r down)
+    fn insert_row(mut self: &App, r: i64) -> void {
+        let rows: i64 = self.b.sheet[0].rows.len;
+        var cells: string[] = [];
+
+        for (let k: i64 in 0..self.b.sheet[0].ncols) { cells.push(""); }
+        let line: string = sheetm::record(&cells, self.b.sheet[0].sep);
+        var at: i64 = self.b.text.count;
+
+        if (r < rows) { at = self.b.sheet[0].starts[r]; }
+        self.b.begin();
+        self.b.insert_line(at, line);
+        self.b.commit();
+        self.sheet_sync();
+    }
+
+    // inserts an empty column at c (in every row that reaches it)
+    fn insert_col(mut self: &App, c: i64) -> void {
+        self.b.begin();
+        var r: i64 = self.b.sheet[0].rows.len - 1;
+
+        while (r >= 0) {
+            let old: string[] = std::copy(self.b.sheet[0].rows[r]);
+
+            if (old.len > c) {
+                var cells: string[] = [];
+
+                for (let k: i64, let s: string in &old) {
+                    if (k == c) { cells.push(""); }
+                    cells.push(s);
+                }
+                self.put_record(r, &cells);
+            }
+            r -= 1;
+        }
+        self.b.commit();
+        var sh: Sheet = self.b.sheet.pop();
+        var ws: i64[] = [];
+
+        for (let k: i64, let w: i64 in &sh.widths) {
+            if (k == c) { ws.push(sheetm::DEFAULT_WIDTH); }
+            ws.push(w);
+        }
+        sh.widths = ws;
+        self.b.sheet.push(sh);
+        self.sheet_sync();
+    }
+
+    // deletes column c (from every row that reaches it)
+    fn delete_col(mut self: &App, c: i64) -> void {
+        if (self.b.sheet[0].ncols <= 1) {
+            self.fail_msg("the last column stays");
+            return;
+        }
+        self.b.begin();
+        var r: i64 = self.b.sheet[0].rows.len - 1;
+
+        while (r >= 0) {
+            let old: string[] = std::copy(self.b.sheet[0].rows[r]);
+
+            if (old.len > c) {
+                var cells: string[] = [];
+
+                for (let k: i64, let s: string in &old) {
+                    if (k != c) { cells.push(s); }
+                }
+                self.put_record(r, &cells);
+            }
+            r -= 1;
+        }
+        self.b.commit();
+        var sh: Sheet = self.b.sheet.pop();
+        var ws: i64[] = [];
+
+        for (let k: i64, let w: i64 in &sh.widths) {
+            if (k != c) { ws.push(w); }
+        }
+        sh.widths = ws;
+        self.b.sheet.push(sh);
+        self.sheet_sync();
+    }
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
