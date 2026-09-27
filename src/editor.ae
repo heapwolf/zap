@@ -6740,6 +6740,77 @@ impl App {
         self.sheet_sync();
     }
 
+    // puts the register: rows (yanked line-wise) below the cursor's (P: above),
+    // else into the cursor's cell
+    fn paste_sheet(mut self: &App, before: bool) -> void {
+        if (self.reg.len == 0) {
+            return;
+        }
+        let r: i64 = self.b.sheet[0].r;
+        let c: i64 = self.b.sheet[0].c;
+
+        if (!self.reg_lines) {
+            if (self.sheet_block.len > 0 && str::eq(self.reg, self.block_text())) {
+                self.paste_block();
+            } else {
+                self.set_cell(r, c, self.reg);
+            }
+            return;
+        }
+        var lines: string[] = str::split(self.reg, "\n");
+
+        if (lines.len > 1 && lines[lines.len - 1].len == 0) { lines.pop(); }
+        let rows: i64 = self.b.sheet[0].rows.len;
+        var at: i64 = self.b.text.count;
+
+        if (r < rows) { at = self.b.sheet[0].starts[r + 1]; }
+        if (before && r < rows) { at = self.b.sheet[0].starts[r]; }
+        self.b.begin();
+
+        for (let k: i64, let l: string in &lines) { self.b.insert_line(at + k, l); }
+        self.b.commit();
+        self.sheet_sync();
+        if (!before) { self.sheet_go(r + 1, c); }
+    }
+
+    // moves to the next (or previous) cell whose text or value the search matches
+    fn sheet_search(mut self: &App, m: &Matcher, forward: bool) -> void {
+        self.sheet_sync();
+        var sh: Sheet = self.b.sheet.pop();
+        let total: i64 = sh.rows.len * sh.ncols;
+        let at: i64 = sh.r * sh.ncols + sh.c;
+        var found: i64 = -1;
+
+        for (let k: i64 in 1..(total + 1)) {
+            var j: i64 = (at + k) % total;
+
+            if (!forward) { j = ((at - k) % total + total) % total; }
+            let r: i64 = j / sh.ncols;
+            let c: i64 = j % sh.ncols;
+            let raw: string = sh.raw(r, c);
+
+            if (raw.len == 0) { continue; }
+            let shown: string = sh.shown(r, c);
+
+            if (m.find(&raw, 0) != none || m.find(&shown, 0) != none) {
+                found = j;
+                break;
+            }
+        }
+        if (found >= 0) {
+            sh.r = found / sh.ncols;
+            sh.c = found % sh.ncols;
+            if ((forward && found <= at) || (!forward && found >= at)) {
+                self.say("search hit an end, continuing at the other");
+            } else {
+                self.say("\(self.cmd_prefix(forward))\(m.pattern)");
+            }
+        } else {
+            self.fail_msg("E486: Pattern not found: \(m.pattern)");
+        }
+        self.b.sheet.push(sh);
+    }
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
