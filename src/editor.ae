@@ -6811,6 +6811,65 @@ impl App {
         self.b.sheet.push(sh);
     }
 
+    // left button at (x, y) of the sheet window: picks a cell (twice: edits
+    // it), selects a row by number or column by letter, grabs a column edge
+    // to resize, or edits in the bar
+    fn sheet_press(mut self: &App, x: i64, y: i64, ms: i64) -> void {
+        self.focus_tree = false;
+        if (self.mode == Mode::Command || self.mode == Mode::Search) { self.mode = Mode::Normal; }
+        self.sheet_sync();
+        let w: i64 = self.edit_w;
+        let h: i64 = self.edit_h;
+
+        self.dragging = true;
+        self.sheet_drag = 0;
+        if (y == 0) {
+            self.edit_cell(self.sheet_raw(self.b.sheet[0].r, self.b.sheet[0].c));
+            return;
+        }
+        if (y == 1) {
+            let e: i64 = self.sheet_edge(x, w);
+
+            if (e >= 0) {
+                self.sizing = e;
+                self.sizing_x = x;
+                self.sizing_w = self.b.sheet[0].widths[e];
+                return;
+            }
+            let c: i64 = self.sheet_col(x, w);
+
+            if (c >= 0) {
+                self.sheet_go(self.b.sheet[0].r, c);
+                self.sheet_select(3);
+                self.sheet_drag = 3;
+            }
+            return;
+        }
+        if (x < self.sheet_gutter()) {
+            let r: i64 = self.sheet_row(y, h);
+
+            if (r >= 0) {
+                self.sheet_go(r, self.b.sheet[0].c);
+                self.sheet_select(2);
+                self.sheet_drag = 2;
+            }
+            return;
+        }
+        let (r, c) = self.sheet_cell(x, y, w, h);
+
+        if (r < 0) {
+            return;
+        }
+        let again: bool = ms - self.click_ms < 400 && r == self.b.sheet[0].r &&
+            c == self.b.sheet[0].c;
+
+        self.click_ms = ms;
+        self.sheet_select(0);
+        self.sheet_go(r, c);
+        self.sheet_drag = 1;
+        if (again) { self.edit_cell(self.sheet_raw(r, c)); }
+    }
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
