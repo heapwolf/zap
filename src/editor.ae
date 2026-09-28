@@ -6870,6 +6870,100 @@ impl App {
         if (again) { self.edit_cell(self.sheet_raw(r, c)); }
     }
 
+    // mouse dragged to (x, y): resizes the grabbed column, or extends the
+    // selection (cells, rows or columns, as the press began it)
+    fn sheet_drag_to(mut self: &App, x: i64, y: i64) -> void {
+        if (self.sizing >= 0) {
+            self.sheet_width(self.sizing, self.sizing_w + x - self.sizing_x);
+            return;
+        }
+        let w: i64 = self.edit_w;
+        let h: i64 = self.edit_h;
+        let r0: i64 = self.b.sheet[0].r;
+        let c0: i64 = self.b.sheet[0].c;
+
+        if (self.sheet_drag == 1) {
+            let (r, c) = self.sheet_cell(x, y, w, h);
+
+            if (r < 0 || (r == r0 && c == c0)) {
+                return;
+            }
+            if (self.b.sheet[0].sel == 0) { self.sheet_select(1); }
+            self.sheet_go(r, c);
+        } else if (self.sheet_drag == 2) {
+            let r: i64 = self.sheet_row(y, h);
+
+            if (r >= 0) { self.sheet_go(r, c0); }
+        } else if (self.sheet_drag == 3) {
+            let c: i64 = self.sheet_col(x, w);
+
+            if (c >= 0) { self.sheet_go(r0, c); }
+        }
+    }
+
+    // wheel: moves the rows by n
+    fn sheet_wheel(mut self: &App, n: i64) -> void {
+        var sh: Sheet = self.b.sheet.pop();
+        var first: i64 = 0;
+
+        if (sh.header) { first = 1; }
+        var t: i64 = sh.top + n;
+
+        if (t > sh.rows.len - 1) { t = sh.rows.len - 1; }
+        if (t < first) { t = first; }
+        sh.r += t - sh.top;
+        sh.top = t;
+        sh.clamp();
+        self.b.sheet.push(sh);
+    }
+
+    // :sheet [on|off|fit|header]: shows the buffer as a spreadsheet or as text
+    fn sheet_ex(mut self: &App, arg: string) -> void {
+        var on: bool = !self.sheet_on();
+
+        if (str::eq(arg, "on")) { on = true; }
+        if (str::eq(arg, "off") || str::eq(arg, "text")) { on = false; }
+        if (str::eq(arg, "fit") || str::eq(arg, "header")) {
+            if (!self.sheet_on()) {
+                self.fail_msg("not a spreadsheet (:sheet shows it as one)");
+                return;
+            }
+            self.sheet_sync();
+            var sh: Sheet = self.b.sheet.pop();
+
+            if (str::eq(arg, "fit")) { sh.fit_all(); } else { sh.header = !sh.header; }
+            self.b.sheet.push(sh);
+            return;
+        }
+        if (arg.len > 0 && !str::eq(arg, "on") && !str::eq(arg, "off") && !str::eq(arg, "text")) {
+            self.fail_msg("E475: Invalid argument: \(arg) (on, off, fit, header)");
+            return;
+        }
+        if (on == self.sheet_on()) {
+            return;
+        }
+        if (on) {
+            // the cursor line's record
+            self.b.sheet.push(Sheet {});
+            self.sheet_sync();
+            var sh: Sheet = self.b.sheet.pop();
+            var r: i64 = 0;
+
+            while (r + 1 < sh.rows.len && sh.starts[r + 1] <= self.b.cy) { r += 1; }
+            sh.r = r;
+            self.b.sheet.push(sh);
+        } else {
+            let sh: Sheet = self.b.sheet.pop();
+            var r: i64 = sh.r;
+
+            if (r >= sh.rows.len) { r = sh.rows.len - 1; }
+            self.go(sh.starts[r], 0, true);
+        }
+    }
+}
+
+// ---- mermaid diagrams, drawn in the text's place (mermaid.ae) ------------------------
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
