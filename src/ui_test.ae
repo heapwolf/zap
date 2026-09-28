@@ -1027,6 +1027,58 @@ fn left() -> term::Button { return term::Button::Left; }
     type_keys(mut &ui, mut &a, "=B2*C2<CR>");
     let t2: string = shot(mut &ui, mut &a);
 
+    if (!str::eq(a.b.text.get(3), ",,\"=SUM(C2:C3)*2\"") &&
+        !str::eq(a.b.text.get(3), ",,=SUM(C2:C3)*2,=B2*C2")) {
+        println(a.b.text.get(3));
+        return 6;
+    }
+    if (!str::contains(t2, "→ 3") || !str::contains(row(&t2, 5), "7")) {
+        print(t2);
+        return 7;
+    }
+    // u undoes the cell edit; dd deletes the row; a column added and removed
+    type_keys(mut &ui, mut &a, "u");
+    if (!str::eq(a.b.text.get(3), ",,=SUM(C2:C3)*2")) {
+        println(a.b.text.get(3));
+        return 8;
+    }
+    type_keys(mut &ui, mut &a, "ggjdd");
+    if (a.b.text.count != 3 || !str::eq(a.b.text.get(1), "ink,3,2")) {
+        return 9;
+    }
+    type_keys(mut &ui, mut &a, "0ic");
+    if (!str::eq(a.b.text.get(0), ",item,qty,price") || a.b.sheet[0].ncols != 4) {
+        return 10;
+    }
+    type_keys(mut &ui, mut &a, "dc");
+    if (!str::eq(a.b.text.get(0), "item,qty,price")) {
+        return 11;
+    }
+    // > widens the column; a value with a , is quoted
+    let w0: i64 = a.b.sheet[0].widths[0];
+
+    type_keys(mut &ui, mut &a, "3>");
+    if (a.b.sheet[0].widths[0] != w0 + 3) {
+        return 12;
+    }
+    type_keys(mut &ui, mut &a, "cred, blue<CR>");
+    if (!str::eq(a.b.text.get(1), "\"red, blue\",3,2")) {
+        println(a.b.text.get(1));
+        return 13;
+    }
+    // :w writes the CSV; :sheet shows it as text
+    type_keys(mut &ui, mut &a, ":w<CR>");
+    if (!str::eq(fs::read_file(p) ?? "", "item,qty,price\n\"red, blue\",3,2\n,,=SUM(C2:C3)*2\n")) {
+        println(fs::read_file(p) ?? "");
+        return 14;
+    }
+    type_keys(mut &ui, mut &a, ":sheet<CR>");
+    if (a.sheet_on() || a.b.cy != 1) {
+        return 15;
+    }
+    return 0;
+}
+
 #test fn wheel_speeds_up() -> i32 {
     var a: App = setup("accel");
 
