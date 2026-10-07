@@ -7166,3 +7166,58 @@ chosen and the rest of it shown after the cursor: words from the lines
 nearest the cursor, then from other buffers; in Aela files, also the
 declarations `aec outline --deps` finds (add-in command `symbols`, run
 in the background, again after each write).
+
+- each row: an icon and kind (`pub fn`, `method Item`, `field Item`,
+  `struct`, `variant Size`, `let`, `module`, `keyword`); a box beside
+  it shows the chosen one's signature, comment and location
+- `str::` exports of the module imported as str; `Size::` an enum's
+  variants; `x.` fields and methods of every struct (by name: zap has
+  no types)
+- `Tab Ctrl-n Down` next, `Shift-Tab Ctrl-p Up` previous
+- `Enter Ctrl-y` insert it, `Ctrl-e` close the menu; any other key keeps typing
+- `Ctrl-n Ctrl-p` with no menu: open it, from one character
+- `:set autocomplete false`: only `Ctrl-n Ctrl-p` open it; `:set icons false`:
+  letters instead of icons (the icons are Nerd Font codicons)
+
+## Selecting
+
+- `v` characters, `V` lines, `Ctrl-v` a block; the same key again exits
+- motions move the selection's end; `o` jumps to the other end
+- `iw aw iW aW` a word (plus trailing spaces)
+- `d x` cut, `c s` change, `y` yank, `> <` indent, `~ u U` case, `J` join,
+  `r` and a character replaces all of it, `p` puts over it
+- in a block: `I` and `A` type on every line (filled on Esc), `c` too
+- `:` uses the selected lines as the range (`:'<,'>s/a/b/`); `gv` reselects
+- mouse: drag to select, double-click a word, triple-click a line
+- yanks also go to the system clipboard: pbcopy, wl-copy, xclip or xsel when zap
+  runs on this machine, and the terminal's OSC 52 (only that over ssh); `:set clipboard false`
+
+## Undo
+
+Nothing is lost: every state the buffer was ever in is kept, as a tree.
+
+- `u` undo, `Ctrl-r` redo (down the branch last left)
+- `g- g+` through every state in creation order, branches included
+- `:earlier 10` `:later 10` by changes; `:earlier 5m` by time (`s m h d`);
+  `:earlier 1f` back to the last written state
+- `:undolist` the latest states, their times, and which was written
+- each write saves the history to an undo file in `~/.local/state/zap/undo/`,
+  read back when the file is reopened unchanged (`:set undofile false`:
+  not kept)
+
+## Searching
+
+- `/pattern` `?pattern`, then `/ Enter` or `n N` to repeat; `* #` the word under the cursor
+- `:noh` hides matches; `:set regex true` makes patterns regular expressions
+- `:s/a/b/g` on the line, `:%s/a/b/g` on all; ranges: `:2,5s`, `:.,$s`, `:'<,'>s`
+- `ignorecase` and `smartcase` (on): case matters when the pattern has a capital
+
+## The command line
+
+- `Tab` a completion menu over it (commands, options, themes, files);
+  `Tab Shift-Tab` cycle, any other key keeps typing
+- `Up Down` history, kept between runs (`~/.local/state/zap/history`)
+- ranges before a command: `N`, `.`, `$`, `%`, `'<`, `'>`, plus `+N -N`; two
+  separated by a comma: `:1,3d`, `:.,+2y`, `:'<,'>>`, `:%j` (`s d y > < j` take one)
+
+## Files
