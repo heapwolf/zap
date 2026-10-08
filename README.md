@@ -91,6 +91,47 @@ with "Applications in terminal may access clipboard" on).
 
 The leader is `<Space>` (`(set leader "\\")` for Vim's).
 
+## Spreadsheets
+
+`.csv` and `.tsv` files open as a spreadsheet, as in sc: a formula bar (cell
+name, text, and a formula's value), column letters, row numbers, a header row
+(bold, pinned on scroll) when the first row looks like one, and
+right-aligned numbers.
+
+```
+ D4  =SUM(C2:C3)*2  → 7
+      A    B    C       D
+   1 item qty price
+   2 pen    2   1.5
+   3 ink    3     2
+   4              7
+```
+
+The buffer text is still the file: editing a cell rewrites its record's
+lines (quoting as needed), so `u`, `:w`, swap and undo files work on the
+text, and `:sheet` toggles the same buffer to text and back. Records may
+span lines (quoted line breaks). The separator is `,`, `;` or tab (detected
+from the first line; `.tsv`: tab). `(set sheets false)` opens them as text.
+
+| keys | |
+| ---- | - |
+| move | `h j k l`, arrows, `w b`, `0 $`, `gg G` (`5G`), `<C-d> <C-u> <C-f> <C-b>`, wheel, click; the grid spans at least Z and row 256 |
+| edit | `<CR>` / `e` / `a` / double click / click the bar: edit the cell in the bar (`B3 = ...`); `=` formula, `c` from empty, `x` clear |
+| select | `v` cells, `V` rows, `<C-v>` columns, or click a row number or column letter, or drag; the bar shows sum, average and count; `y` yank (as TSV), `x` clear, `d` delete rows or columns, `p` paste a yanked block |
+| rows, columns | `o O`, `ir ic` (insert before), `ar ac` (after), `dd` / `3dd`, `dc`; `y` cell, `Y` rows, `p P` |
+| widths | `> <` (`5>`), or drag a column letter's right edge; `f` fit to contents, `F` fit all |
+| other | `/ ? n N` search cell text and values; `:sheet` toggle text/grid, `:sheet header`, `:sheet fit` |
+
+Formulas: numbers, `"text"`, cells (`B3`, `$B$3`), `+ - * / ^`, `&`, `= <> <
+> <= >=` (1 or 0), and `SUM AVERAGE MIN MAX COUNT COUNTA ABS ROUND INT SQRT
+MOD POW IF AND OR NOT LEN UPPER LOWER CONCAT` (ranges as arguments:
+`SUM(B2:B9)`; sc's `@sum(B2:B9)` too). Errors: `#REF! #DIV/0! #VALUE! #NAME?
+#CYCLE! #ERR!`. Colors come from the theme (cursor cell: `search`,
+selection: `visual`, bar: the grid's background, letters and numbers:
+`status`). Themes can override them with `sheet.head`,
+`sheet.head.current`, `sheet.cursor`, `sheet.selection`, `sheet.header` and
+`sheet.bar`.
+
 ## Configuration
 
 `~/.config/zap/init.zap` (or `$XDG_CONFIG_HOME/zap/init.zap`), read after
