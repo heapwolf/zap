@@ -1,0 +1,125 @@
+//! Mermaid diagrams drawn as text: box-drawing characters on a canvas the
+//! viewer pans (editor.ae, view.ae's MermaidPane).
+//!
+//! * Flowcharts (`graph` / `flowchart`, TD TB BT LR RL): node shapes
+//!   (`[ ]` `( )` `([ ])` `[[ ]]` `[( )]` `(( ))` `{ }` `{{ }}` `>]`
+//!   `[/ /]`), links (`-->` `---` `-.->` `==>` `--x` `--o` `<-->` `~~~`,
+//!   and longer forms) with labels (`-->|a|`, `-- a -->`), chains
+//!   (`A --> B --> C`) and `&` (`A & B --> C`). Laid out in ranks: cycles
+//!   broken, each node ranked by longest path, a long link given a point in
+//!   each rank it crosses, rank order by neighbors' order (fewer
+//!   crossings), then routed at right angles.
+//! * State diagrams (`stateDiagram`, `stateDiagram-v2`): like flowcharts,
+//!   with `[*]` as start and end.
+//! * Sequence diagrams: participants and actors (`as`), messages (`->>`
+//!   `-->>` `->` `-->` `-x` `--x` `-)` `--)`, self-messages too), notes (left
+//!   of, right of, over), blocks (loop alt else opt par and critical break
+//!   rect, through their end), autonumber.
+//!
+//! Zoom sets spacing: the room boxes and gaps get (ZOOM_MIN to ZOOM_MAX);
+//! below 0, labels are also truncated (with an ellipsis), to 3 cells at
+//! least, so a big diagram fits.
+
+import str from "std/string";
+import tui from "std/tui";
+import process from "std/process";
+
+/// canvas cell kinds (colors: view.ae)
+export let K_BLANK: i64 = 0;
+export let K_BOX: i64 = 1;          // node or participant border
+export let K_TEXT: i64 = 2;         // node text
+export let K_LINE: i64 = 3;         // link
+export let K_HEAD: i64 = 4;         // link head
+export let K_LABEL: i64 = 5;        // link or message text
+export let K_FRAME: i64 = 6;        // block line and title, lifeline
+export let K_NOTE: i64 = 7;         // note
+export let K_ERROR: i64 = 8;        // what could not be drawn
+
+/// a drawn diagram
+export struct Canvas {
+    export w: i64 = 0;
+    export h: i64 = 0;
+    export ch: i64[] = [];      // each cell's code point (0: none)
+    export kind: i64[] = [];
+    export title: string = "";  // what it is: "flowchart TD", "sequence"
+    export error: string = "";  // why it was not drawn ("": it was)
+    export ids: string[] = [];  // nodes drawn, and their middles (zoom keeps one in place)
+    export mx: i64[] = [];
+    export my: i64[] = [];
+    bits: i64[] = [];           // lines through the cell: 1 up 2 down 4 left 8 right, 16 dotted, 32
+                                //   thick
+}
+
+fn canvas(w: i64, h: i64) -> Canvas {
+    var c: Canvas = Canvas { w: w, h: h };
+
+    for (let k: i64 in 0..(w * h)) {
+        c.ch.push(0);
+        c.kind.push(0);
+        c.bits.push(0);
+    }
+    return c;
+}
+
+impl Canvas {
+    fn put(mut self: &Canvas, x: i64, y: i64, cp: i64, k: i64) -> void {
+        if (x < 0 || y < 0 || x >= self.w || y >= self.h) {
+            return;
+        }
+        self.ch[y * self.w + x] = cp;
+        self.kind[y * self.w + x] = k;
+    }
+
+    fn text(mut self: &Canvas, x: i64, y: i64, s: string, k: i64) -> void {
+        var at: i64 = x;
+
+        for (let c: char in str::chars(s)) {
+            self.put(at, y, c as i64, k);
+            at += 1;
+        }
+    }
+
+    // add line bits b at (x, y)
+    fn bit(mut self: &Canvas, x: i64, y: i64, b: i64) -> void {
+        if (x < 0 || y < 0 || x >= self.w || y >= self.h) {
+            return;
+        }
+        self.bits[y * self.w + x] = self.bits[y * self.w + x] | b;
+    }
+
+    /// a horizontal or vertical line from (x1, y1) to (x2, y2); style 16 dotted, 32 thick
+    fn line(mut self: &Canvas, x1: i64, y1: i64, x2: i64, y2: i64, style: i64) -> void {
+        if (y1 == y2) {
+            var a: i64 = x1;
+            var b: i64 = x2;
+
+            if (b < a) {
+                a = x2;
+                b = x1;
+            }
+
+            for (let x: i64 in a..(b + 1)) {
+                var m: i64 = style;
+
+                if (x > a) { m = m | 4; }
+                if (x < b) { m = m | 8; }
+                self.bit(x, y1, m);
+            }
+        } else {
+            var a: i64 = y1;
+            var b: i64 = y2;
+
+            if (b < a) {
+                a = y2;
+                b = y1;
+            }
+
+            for (let y: i64 in a..(b + 1)) {
+                var m: i64 = style;
+
+                if (y > a) { m = m | 1; }
+                if (y < b) { m = m | 2; }
+                self.bit(x1, y, m);
+            }
+        }
+    }
