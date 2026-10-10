@@ -233,3 +233,112 @@ impl Canvas {
         return (texts, kinds);
     }
 }
+
+// the box-drawing character for line bits b
+fn glyph(b: i64) -> i64 {
+    let d: i64 = b & 15;
+    let thick: bool = (b & 32) != 0;
+    let dotted: bool = (b & 16) != 0;
+
+    if (d == 1 || d == 2 || d == 3) {
+        if (thick) {
+            return 0x2503;
+        }
+        if (dotted) {
+            return 0x2506;
+        }
+        return 0x2502;
+    }
+    if (d == 4 || d == 8 || d == 12) {
+        if (thick) {
+            return 0x2501;
+        }
+        if (dotted) {
+            return 0x2504;
+        }
+        return 0x2500;
+    }
+    var light: i64[] = [
+        0x20, 0x2502, 0x2502, 0x2502, 0x2500, 0x2518, 0x2510, 0x2524, 0x2500, 0x2514, 0x250C,
+        0x251C, 0x2500, 0x2534, 0x252C, 0x253C
+    ];
+    var heavy: i64[] = [
+        0x20, 0x2503, 0x2503, 0x2503, 0x2501, 0x251B, 0x2513, 0x252B, 0x2501, 0x2517, 0x250F,
+        0x2523, 0x2501, 0x253B, 0x2533, 0x254B
+    ];
+
+    if (thick) {
+        return heavy[d];
+    }
+    return light[d];
+}
+
+// a canvas showing why nothing was drawn
+fn failed(why: string, title: string) -> Canvas {
+    var c: Canvas = canvas(tui::width(why) + 2, 1);
+
+    c.text(1, 0, why, K_ERROR);
+    c.error = why;
+    c.title = title;
+    return c;
+}
+
+/// draw source text at zoom z
+export fn draw(src: string, z: i64) -> Canvas {
+    let lines: string[] = statements(src);
+
+    if (lines.len == 0) {
+        return failed("an empty diagram", "mermaid");
+    }
+    let head: string[] = str::fields(lines[0]);
+    let kind: string = head[0];
+
+    if (str::eq(kind, "graph") || str::eq(kind, "flowchart")) {
+        var dir: string = "TD";
+
+        if (head.len > 1) { dir = str::to_upper(head[1]); }
+        var g: Graph = Graph {};
+
+        g.flow(&lines);
+        return g.draw(dir, z, "flowchart \(dir)");
+    }
+    if (str::eq(kind, "stateDiagram") || str::eq(kind, "stateDiagram-v2")) {
+        var g: Graph = Graph {};
+        let dir: string = g.states(&lines);
+
+        return g.draw(dir, z, "state diagram");
+    }
+    if (str::eq(kind, "sequenceDiagram")) {
+        return sequence(&lines, z);
+    }
+    return failed("\(kind): not drawn yet (flowcharts, state and sequence diagrams are)", kind);
+}
+
+// the diagram's statements: its lines, also split at ;, minus %% comments,
+// front matter and blank lines
+fn statements(src: string) -> string[] {
+    var out: string[] = [];
+    var front: bool = false;
+    var first: bool = true;
+
+    for (let l0: string in str::split(src, "\n")) {
+        let l: string = str::trim(str::replace(l0, "\r", ""));
+
+        if (str::eq(l, "---")) {
+            if (first || front) {
+                front = !front;
+                first = false;
+                continue;
+            }
+        }
+        if (front || l.len == 0 || str::starts_with(l, "%%")) { continue; }
+        first = false;
+
+        for (let part: string in split_semis(l)) {
+            let t: string = str::trim(part);
+
+            if (t.len > 0) { out.push(t); }
+        }
+    }
+    return out;
+}
