@@ -342,3 +342,116 @@ fn statements(src: string) -> string[] {
     }
     return out;
 }
+
+// split a line at ; outside quotes and brackets
+fn split_semis(l: string) -> string[] {
+    var out: string[] = [];
+    var depth: i64 = 0;
+    var quoted: bool = false;
+    var at: i64 = 0;
+
+    for (let i: i64 in 0..l.len) {
+        let c: u8 = l[i];
+
+        if (c == '"') { quoted = !quoted; }
+        if (quoted) { continue; }
+        if (c == '[' || c == '(' || c == '{') { depth += 1; }
+        if (c == ']' || c == ')' || c == '}') { depth -= 1; }
+        if (c == ';' && depth <= 0) {
+            out.push(str::substr(l, at, i - at));
+            at = i + 1;
+        }
+    }
+    out.push(str::substr(l, at, l.len - at));
+    return out;
+}
+
+// a label as drawn: quotes removed, <br> a line break, entities decoded
+fn clean(s: string) -> string {
+    var t: string = str::trim(s);
+
+    if (t.len >= 2 && t[0] == '"' && t[t.len - 1] == '"') { t = str::substr(t, 1, t.len - 2); }
+    if (t.len >= 2 && t[0] == '`' && t[t.len - 1] == '`') { t = str::substr(t, 1, t.len - 2); }
+    t = str::replace(t, "<br/>", "\n");
+    t = str::replace(t, "<br />", "\n");
+    t = str::replace(t, "<br>", "\n");
+    t = str::replace(t, "\\n", "\n");
+    t = str::replace(t, "&amp;", "&");
+    t = str::replace(t, "&lt;", "<");
+    t = str::replace(t, "&gt;", ">");
+    t = str::replace(t, "&quot;", "\"");
+    t = str::replace(t, "**", "");
+    return t;
+}
+
+/// max width of a label's lines at zoom z (0: unlimited): zoomed out,
+/// they are truncated with an ellipsis
+export fn cap_of(z: i64) -> i64 {
+    if (z >= 0) {
+        return 0;
+    }
+    let caps: i64[] = [20, 14, 10, 6, 3];
+    var k: i64 = -z - 1;
+
+    if (k >= caps.len) { k = caps.len - 1; }
+    return caps[k];
+}
+
+// truncate a label's lines to cap cells (0: no limit)
+fn cut(s: &string, cap: i64) -> string {
+    if (cap <= 0) {
+        return *s;
+    }
+    var out: string[] = [];
+
+    for (let l: string in str::split(*s, "\n")) {
+        if (tui::width(l) <= cap) {
+            out.push(l);
+        } else {
+            // (truncate adds the ellipsis)
+            out.push(tui::truncate(l, cap));
+        }
+    }
+    return str::join(&out, "\n");
+}
+
+/// zoom range: out until labels are 3 cells, in to roomy boxes
+export let ZOOM_MIN: i64 = -5;
+export let ZOOM_MAX: i64 = 4;
+
+// width of a label's widest line
+fn label_w(s: &string) -> i64 {
+    var w: i64 = 0;
+
+    for (let l: string in str::split(*s, "\n")) {
+        let lw: i64 = tui::width(l);
+
+        if (lw > w) { w = lw; }
+    }
+    return w;
+}
+
+// ---- graphs (flowcharts, state diagrams) ----------------------------------------------
+
+struct Node {
+    id: string;
+    label: string = "";
+    shape: i64;         // as Canvas.boxed's (-1: a point a long link passes through)
+    rank: i64 = 0;
+    order: f64 = 0.0;
+    main: i64 = 0;      // position along the ranks, and across them
+    cross: i64 = 0;
+    msize: i64 = 0;
+    csize: i64 = 0;
+}
+
+struct Edge {
+    a: i64;
+    b: i64;
+    label: string;
+    style: i64 = 0;      // 0, 16 dotted, 32 thick, -1 none (~~~)
+    head: i64;           // head at b: 0 none, 1 arrow, 2 x, 3 o
+    tail: i64 = 0;       // and at a (<-->)
+    back: bool = false;  // laid out b to a (it closes a cycle)
+    path: i64[] = [];    // nodes it passes through, from its laid-out start
+}
