@@ -455,3 +455,130 @@ struct Edge {
     back: bool = false;  // laid out b to a (it closes a cycle)
     path: i64[] = [];    // nodes it passes through, from its laid-out start
 }
+
+struct Graph {
+    nodes: Node[] = [];
+    edges: Edge[] = [];
+}
+
+// a link as written: style, heads, label (if inside it), end
+struct Link {
+    ok: bool = false;
+    style: i64 = 0;
+    head: i64 = 0;
+    tail: i64 = 0;
+    label: string = "";
+    stop: i64 = 0;
+}
+
+fn is_id(c: u8) -> bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+        c == '_' || c >= 128;
+}
+
+fn skip(s: &string, i: i64) -> i64 {
+    var j: i64 = i;
+
+    while (j < s.len && (s[j] == ' ' || s[j] == '\t')) { j += 1; }
+    return j;
+}
+
+fn at_str(s: &string, i: i64, t: string) -> bool {
+    return i + t.len <= s.len && str::eq(str::substr(*s, i, t.len), t);
+}
+
+// a link head at i (x o >) -> (kind, end; none: the same i)
+fn head_of(s: &string, i: i64) -> (i64, i64) {
+    if (i < s.len) {
+        let c: u8 = s[i];
+
+        if (c == '>') {
+            return (1, i + 1);
+        }
+        // (x and o end a link only if no name follows: --x B, not --xyz)
+        if ((c == 'x' || c == 'o') && (i + 1 >= s.len || !is_id(s[i + 1]))) {
+            if (c == 'x') {
+                return (2, i + 1);
+            }
+            return (3, i + 1);
+        }
+    }
+    return (0, i);
+}
+
+// the link at i (if any)
+fn link_at(s: &string, i0: i64) -> Link {
+    var i: i64 = skip(s, i0);
+    let n: i64 = s.len;
+    var l: Link = Link {};
+    var tail: i64 = 0;
+
+    if (i < n && s[i] == '<') {
+        tail = 1;
+        i += 1;
+    } else if (i + 1 < n && (s[i] == 'x' || s[i] == 'o') && (s[i + 1] == '-' || s[i + 1] == '=')) {
+        if (s[i] == 'x') { tail = 2; } else { tail = 3; }
+        i += 1;
+    }
+    let start: i64 = i;
+
+    while (i < n && (s[i] == '-' || s[i] == '=' || s[i] == '.' || s[i] == '~')) { i += 1; }
+    let run: string = str::substr(*s, start, i - start);
+
+    if (run.len < 2 && !(run.len == 1 && i < n && s[i] == '>')) {
+        return l;
+    }
+    if (run.len == 0) {
+        return l;
+    }
+    var style: i64 = 0;
+
+    if (str::contains(run, "=")) { style = 32; }
+    if (str::contains(run, ".")) { style = 16; }
+    if (str::contains(run, "~")) { style = -1; }
+    let (h0, e0) = head_of(s, i);
+    var head: i64 = h0;
+    var e: i64 = e0;
+    var label: string = "";
+
+    // -- text -->, == text ==>, -. text .->: label inside the link
+    if (head == 0 && (str::eq(run, "--") || str::eq(run, "==") || str::eq(run, "-.")) && e < n &&
+        s[e] == ' ') {
+        var closes: string[] = ["-->", "---", "--x", "--o"];
+
+        if (str::eq(run, "==")) { closes = ["==>", "===", "==x", "==o"]; }
+        if (str::eq(run, "-.")) { closes = [".->", ".-"]; }
+        var best: i64 = -1;
+        var blen: i64 = 0;
+
+        for (let c: string in &closes) {
+            if (let k = str::find_from(*s, c, e)) {
+                if (best < 0 || k < best) {
+                    best = k;
+                    blen = c.len;
+                }
+            }
+        }
+        if (best < 0) {
+            return l;
+        }
+        label = clean(str::substr(*s, e, best - e));
+        var j: i64 = best;
+
+        while (j < n && (s[j] == '-' || s[j] == '=' || s[j] == '.')) { j += 1; }
+        let (h2, e2) = head_of(s, j);
+
+        head = h2;
+        e = e2;
+    }
+    // -->|text|
+    var k: i64 = skip(s, e);
+
+    if (k < n && s[k] == '|') {
+        if (let close = str::find_from(*s, "|", k + 1)) {
+            label = clean(str::substr(*s, k + 1, close - k - 1));
+            e = close + 1;
+        }
+    }
+    return Link { ok: true, style: style, head: head, tail: tail, label: label, stop: e };
+}
