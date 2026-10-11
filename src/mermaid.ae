@@ -582,3 +582,131 @@ fn link_at(s: &string, i0: i64) -> Link {
     }
     return Link { ok: true, style: style, head: head, tail: tail, label: label, stop: e };
 }
+
+impl Graph {
+    // node id's index (created if new)
+    fn node(mut self: &Graph, id: string) -> i64 {
+        for (let k: i64, let n: &self::&Node in &self.nodes) {
+            if (str::eq(n.id, id)) {
+                return k;
+            }
+        }
+        self.nodes.push(Node { id: id, label: id, shape: 0 });
+        return self.nodes.len - 1;
+    }
+
+    // a node at i: name and shape with text -> (index, end; -1: none)
+    fn node_at(mut self: &Graph, s: &string, i0: i64) -> (i64, i64) {
+        let i: i64 = skip(s, i0);
+        var j: i64 = i;
+
+        while (j < s.len && is_id(s[j])) { j += 1; }
+
+        // (a - inside a name: a-b, not a link)
+        while (j + 1 < s.len && s[j] == '-' && is_id(s[j + 1]) && !at_str(s, j, "--")) {
+            j += 1;
+
+            while (j < s.len && is_id(s[j])) { j += 1; }
+        }
+        if (j == i) {
+            return (-1, i0);
+        }
+        let id: string = str::substr(*s, i, j - i);
+        let k: i64 = self.node(id);
+        let opens: string[] = [
+            "(((", "((", "([", "[[", "[(", "[/", "[\\", "{{", "[", "(", "{", ">"
+        ];
+        let closes: string[] = [
+            ")))", "))", "])", "]]", ")]", "/]", "\\]", "}}", "]", ")", "}", "]"
+        ];
+        let shapes: i64[] = [4, 4, 1, 3, 1, 0, 0, 5, 0, 1, 2, 0];
+
+        for (let o: i64, let op: string in &opens) {
+            if (!at_str(s, j, op)) { continue; }
+            let a: i64 = j + op.len;
+            // [/a/] [\a\] [/a\] [\a/]: either slant closes
+            let slant: bool = o == 5 || o == 6;
+            var e: i64 = a;
+            var quoted: bool = false;
+
+            while (e < s.len) {
+                if (s[e] == '"') { quoted = !quoted; }
+                if (!quoted && at_str(s, e, closes[o])) { break; }
+                if (!quoted && slant && (at_str(s, e, "/]") || at_str(s, e, "\\]"))) { break; }
+                e += 1;
+            }
+            if (e >= s.len) { break; }
+            self.nodes[k].label = clean(str::substr(*s, a, e - a));
+            self.nodes[k].shape = shapes[o];
+            j = e + closes[o].len;
+            break;
+        }
+        // :::aClass
+        if (at_str(s, j, ":::")) {
+            j += 3;
+
+            while (j < s.len && (is_id(s[j]) || s[j] == '-')) { j += 1; }
+        }
+        return (k, j);
+    }
+
+    // nodes joined by &: their indexes, and the end
+    fn group_at(mut self: &Graph, s: &string, i0: i64) -> (i64[], i64) {
+        var out: i64[] = [];
+        var i: i64 = i0;
+
+        while (true) {
+            let (k, e) = self.node_at(s, i);
+
+            if (k < 0) { break; }
+            out.push(k);
+            i = e;
+            let j: i64 = skip(s, i);
+
+            if (j < s.len && s[j] == '&') {
+                i = j + 1;
+                continue;
+            }
+            break;
+        }
+        return (out, i);
+    }
+
+    // a flowchart's statements (the first is graph TD)
+    fn flow(mut self: &Graph, lines: &string[]) -> void {
+        for (let k: i64 in 1..lines.len) {
+            let l: string = lines[k];
+            let w: string = str::fields(l)[0];
+
+            if (str::eq(w, "subgraph") || str::eq(w, "end") || str::eq(w, "classDef") ||
+                str::eq(w, "class") || str::eq(w, "style") || str::eq(w, "linkStyle") ||
+                str::eq(w, "click") || str::eq(w, "direction")) {
+                continue;
+            }
+            let (left, e) = self.group_at(&l, 0);
+
+            if (left.len == 0) { continue; }
+            var src: i64[] = left;
+            var i: i64 = e;
+
+            while (true) {
+                let ln: Link = link_at(&l, i);
+
+                if (!ln.ok) { break; }
+                let (right, e2) = self.group_at(&l, ln.stop);
+
+                if (right.len == 0) { break; }
+
+                for (let a: i64 in &src) {
+                    for (let b: i64 in &right) {
+                        self.edges.push(Edge {
+                            a: a, b: b, label: ln.label, style: ln.style, head: ln.head,
+                            tail: ln.tail
+                        });
+                    }
+                }
+                src = right;
+                i = e2;
+            }
+        }
+    }
