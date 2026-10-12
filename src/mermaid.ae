@@ -710,3 +710,85 @@ impl Graph {
             }
         }
     }
+
+    // a state diagram's statements -> the direction
+    fn states(mut self: &Graph, lines: &string[]) -> string {
+        var dir: string = "TD";
+        let start: i64 = self.node("[*]start");
+
+        self.nodes[start].label = "●";
+        self.nodes[start].shape = 4;
+        var used_start: bool = false;
+        var fin: i64 = -1;
+
+        for (let k: i64 in 1..lines.len) {
+            let l: string = lines[k];
+            let f: string[] = str::fields(l);
+
+            if (str::eq(f[0], "direction") && f.len > 1) {
+                dir = str::to_upper(f[1]);
+                continue;
+            }
+            if (str::eq(f[0], "}") || str::eq(f[0], "note") || str::eq(f[0], "classDef") ||
+                str::eq(f[0], "class")) {
+                continue;
+            }
+            // state "a long name" as s1
+            if (str::eq(f[0], "state")) {
+                if (let q = str::find(l, " as ")) {
+                    let name: string = clean(str::substr(l, 6, q - 6));
+                    let id: string = str::trim(str::substr(l, q + 4, l.len - q - 4));
+                    let n: i64 = self.node(str::trim_suffix(id, " {"));
+
+                    self.nodes[n].label = name;
+                    self.nodes[n].shape = 1;
+                }
+                continue;
+            }
+            if (let arrow = str::find(l, "-->")) {
+                var rest: string = str::substr(l, arrow + 3, l.len - arrow - 3);
+                var label: string = "";
+
+                if (let c = str::find(rest, ":")) {
+                    label = clean(str::substr(rest, c + 1, rest.len - c - 1));
+                    rest = str::substr(rest, 0, c);
+                }
+                let a_id: string = str::trim(str::substr(l, 0, arrow));
+                let b_id: string = str::trim(rest);
+                var a: i64 = 0;
+                var b: i64 = 0;
+
+                if (str::eq(a_id, "[*]")) {
+                    a = start;
+                    used_start = true;
+                } else {
+                    a = self.node(a_id);
+                    self.nodes[a].shape = 1;
+                }
+                if (str::eq(b_id, "[*]")) {
+                    if (fin < 0) {
+                        fin = self.node("[*]end");
+                        self.nodes[fin].label = "◉";
+                        self.nodes[fin].shape = 4;
+                    }
+                    b = fin;
+                } else {
+                    b = self.node(b_id);
+                    self.nodes[b].shape = 1;
+                }
+                self.edges.push(Edge { a: a, b: b, label: label, head: 1 });
+                continue;
+            }
+            // s1 : a description
+            if (let c = str::find(l, ":")) {
+                let n: i64 = self.node(str::trim(str::substr(l, 0, c)));
+
+                self.nodes[n].label = clean(str::substr(l, c + 1, l.len - c - 1));
+                self.nodes[n].shape = 1;
+            }
+        }
+        if (!used_start) { self.nodes[start].shape = -2; }
+        return dir;
+    }
+
+    // ---- layout ----------------------------------------------------------------------
