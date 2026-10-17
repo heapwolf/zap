@@ -792,3 +792,224 @@ impl Graph {
     }
 
     // ---- layout ----------------------------------------------------------------------
+
+    fn draw(mut self: &Graph, dir: string, z: i64, title: string) -> Canvas {
+        let cap: i64 = cap_of(z);
+
+        for (let k: i64 in 0..self.nodes.len) {
+            if (!str::starts_with(self.nodes[k].id, "[*]")) {
+                self.nodes[k].label = cut(&self.nodes[k].label, cap);
+            }
+        }
+
+        for (let k: i64 in 0..self.edges.len) {
+            self.edges[k].label = cut(&self.edges[k].label, cap);
+        }
+        // (a state diagram start with no outgoing links: dropped)
+        var real: i64 = 0;
+
+        for (let n: &self::&Node in &self.nodes) {
+            if (n.shape != -2) { real += 1; }
+        }
+        if (real == 0) {
+            return failed("nothing to draw", title);
+        }
+        let across: bool = str::eq(dir, "LR") || str::eq(dir, "RL");
+        let flip: bool = str::eq(dir, "BT") || str::eq(dir, "RL");
+        let n0: i64 = self.nodes.len;
+
+        // links that close a cycle: laid out reversed
+        self.break_cycles();
+
+        // ranks: longest path from a node with no incoming links
+        for (let k: i64 in 0..n0) { self.nodes[k].rank = 0; }
+        var changed: bool = true;
+        var rounds: i64 = 0;
+
+        while (changed && rounds < n0 + 1) {
+            changed = false;
+            rounds += 1;
+
+            for (let e: &self::&Edge in &self.edges) {
+                if (e.style == -1 && false) { continue; }
+                var a: i64 = e.a;
+                var b: i64 = e.b;
+
+                if (e.back) {
+                    a = e.b;
+                    b = e.a;
+                }
+                if (a == b) { continue; }
+                if (self.nodes[b].rank < self.nodes[a].rank + 1) {
+                    self.nodes[b].rank = self.nodes[a].rank + 1;
+                    changed = true;
+                }
+            }
+        }
+
+        // a long link: a point in each rank it crosses
+        for (let k: i64 in 0..self.edges.len) {
+            var a: i64 = self.edges[k].a;
+            var b: i64 = self.edges[k].b;
+
+            if (self.edges[k].back) {
+                a = self.edges[k].b;
+                b = self.edges[k].a;
+            }
+            var path: i64[] = [a];
+
+            if (a != b) {
+                var r: i64 = self.nodes[a].rank + 1;
+
+                while (r < self.nodes[b].rank) {
+                    self.nodes.push(Node { id: "", shape: -1, rank: r });
+                    path.push(self.nodes.len - 1);
+                    r += 1;
+                }
+            }
+            path.push(b);
+            self.edges[k].path = path;
+        }
+        // sizes: a node's text plus padding
+        var pad: i64 = 1 + z;
+
+        if (pad < 0) { pad = 0; }
+        var vpad: i64 = 0;
+
+        if (z >= 2) { vpad = 1; }
+
+        for (let k: i64 in 0..self.nodes.len) {
+            var w: i64 = 1;
+            var h: i64 = 1;
+
+            if (self.nodes[k].shape >= 0) {
+                let lw: i64 = label_w(&self.nodes[k].label);
+                let lines: i64 = str::split(self.nodes[k].label, "\n").len;
+
+                w = lw + 2 + 2 * pad;
+                h = lines + 2 + 2 * vpad;
+            } else if (self.nodes[k].shape == -2) {
+                w = 0;
+                h = 0;
+            }
+            if (across) {
+                self.nodes[k].msize = w;
+                self.nodes[k].csize = h;
+            } else {
+                self.nodes[k].msize = h;
+                self.nodes[k].csize = w;
+            }
+        }
+        // the ranks, in order
+        var top: i64 = 0;
+
+        for (let n: &self::&Node in &self.nodes) {
+            if (n.rank > top) { top = n.rank; }
+        }
+        var ranks: i64[][] = [];
+
+        for (let r: i64 in 0..(top + 1)) { ranks.push([]); }
+
+        for (let k: i64 in 0..self.nodes.len) {
+            if (self.nodes[k].shape == -2) { continue; }
+            ranks[self.nodes[k].rank].push(k);
+        }
+
+        for (let r: i64 in 0..ranks.len) {
+            for (let j: i64, let k: i64 in &ranks[r]) { self.nodes[k].order = j as f64; }
+        }
+
+        // order within a rank: by neighbors' order in adjacent ranks
+        for (let pass: i64 in 0..6) {
+            let down: bool = pass % 2 == 0;
+            var r: i64 = 1;
+
+            if (!down) { r = top - 1; }
+
+            while (r >= 0 && r <= top) {
+                if (down) {
+                    self.sort_rank(mut &ranks[r], r - 1);
+                } else {
+                    self.sort_rank(mut &ranks[r], r + 1);
+                }
+                if (down) { r += 1; } else { r -= 1; }
+            }
+        }
+        // hops: each link's steps from one rank to the next (via its nodes and points)
+        var hop_e: i64[] = [];
+        var hop_p: i64[] = [];
+        var hop_q: i64[] = [];
+
+        for (let k: i64, let e: &self::&Edge in &self.edges) {
+            if (e.style == -1 || e.path.len < 2 || e.a == e.b) { continue; }
+
+            for (let j: i64 in 1..e.path.len) {
+                hop_e.push(k);
+                hop_p.push(e.path[j - 1]);
+                hop_q.push(e.path[j]);
+            }
+        }
+        let nh: i64 = hop_e.len;
+        // gaps between ranks: a row (or column) per hop bend, room for labels,
+        // a row for heads
+        var slots: i64[] = [];
+        var labels: i64[] = []; // widest label leaving a rank (0: none)
+
+        for (let r: i64 in 0..(top + 1)) {
+            slots.push(0);
+            labels.push(0);
+        }
+
+        for (let h: i64 in 0..nh) {
+            let r: i64 = self.nodes[hop_p[h]].rank;
+
+            if (slots[r] < 6) { slots[r] += 1; }
+            let e: &self::&Edge = &self.edges[hop_e[h]];
+
+            if (e.label.len > 0 && hop_p[h] == e.path[0] && label_w(&e.label) > labels[r]) {
+                labels[r] = label_w(&e.label);
+            }
+        }
+        var cgap: i64 = 3 + 2 * z;
+
+        if (across) { cgap = 1 + z; }
+        if (cgap < 1) { cgap = 1; }
+        var gaps: i64[] = [];
+
+        for (let r: i64 in 0..(top + 1)) {
+            var g: i64 = 3 + z;
+
+            if (across) { g = 6 + 2 * z; }
+            if (g < 2) { g = 2; }
+            var need: i64 = slots[r] + 2;
+
+            if (labels[r] > 0) {
+                if (across) { need += labels[r] + 3; } else { need += 1; }
+            }
+            if (g < need) { g = need; }
+            gaps.push(g);
+        }
+        // along: each rank's band
+        var band_at: i64[] = [];
+        var band_size: i64[] = [];
+        var at: i64 = 1;
+
+        for (let r: i64 in 0..(top + 1)) {
+            var size: i64 = 1;
+
+            for (let k: i64 in &ranks[r]) {
+                if (self.nodes[k].msize > size) { size = self.nodes[k].msize; }
+            }
+            band_at.push(at);
+            band_size.push(size);
+
+            for (let k: i64 in &ranks[r]) {
+                self.nodes[k].main = at + (size - self.nodes[k].msize) / 2;
+            }
+            at += size + gaps[r];
+        }
+        let total_main: i64 = at - gaps[top] + 1;
+
+        // across: in order, then each pulled toward its neighbors (a few passes), cgap apart
+        for (let r: i64 in 0..(top + 1)) {
+            var x: i64 = 1;
