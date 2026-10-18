@@ -1013,3 +1013,223 @@ impl Graph {
         // across: in order, then each pulled toward its neighbors (a few passes), cgap apart
         for (let r: i64 in 0..(top + 1)) {
             var x: i64 = 1;
+
+            for (let k: i64 in &ranks[r]) {
+                self.nodes[k].cross = x;
+                x += self.nodes[k].csize + cgap;
+            }
+        }
+
+        for (let pass: i64 in 0..8) {
+            let down: bool = pass % 2 == 0;
+            var r: i64 = 1;
+
+            if (!down) { r = top - 1; }
+
+            while (r >= 0 && r <= top) {
+                var near: i64 = r - 1;
+
+                if (!down) { near = r + 1; }
+                self.place_rank(&ranks[r], near, cgap);
+                if (down) { r += 1; } else { r -= 1; }
+            }
+        }
+        var lo: i64 = 0;
+        var hi: i64 = 0;
+        var any: bool = false;
+
+        for (let n: &self::&Node in &self.nodes) {
+            if (n.shape == -2) { continue; }
+            if (!any || n.cross < lo) { lo = n.cross; }
+            if (!any || n.cross + n.csize > hi) { hi = n.cross + n.csize; }
+            any = true;
+        }
+
+        for (let k: i64 in 0..self.nodes.len) { self.nodes[k].cross += 1 - lo; }
+        // ports: where each hop leaves its node and enters the next, spread
+        // along the node's side in order of the other ends
+        var hop_s: i64[] = [];
+        var hop_t: i64[] = [];
+
+        for (let h: i64 in 0..nh) {
+            hop_s.push(self.mid(hop_p[h]));
+            hop_t.push(self.mid(hop_q[h]));
+        }
+
+        for (let k: i64 in 0..self.nodes.len) {
+            if (self.nodes[k].shape < 0) { continue; }
+            var outs: i64[] = [];
+            var ins: i64[] = [];
+
+            for (let h: i64 in 0..nh) {
+                if (hop_p[h] == k) { outs.push(h); }
+                if (hop_q[h] == k) { ins.push(h); }
+            }
+            self.spread(&outs, mut &hop_s, &hop_q, k);
+            self.spread(&ins, mut &hop_t, &hop_p, k);
+        }
+
+        // a dummy point's hops: through it, at its port
+        for (let h: i64 in 0..nh) {
+            if (self.nodes[hop_q[h]].shape == -1) {
+                for (let h2: i64 in 0..nh) {
+                    if (hop_p[h2] == hop_q[h] && hop_e[h2] == hop_e[h]) { hop_t[h] = hop_s[h2]; }
+                }
+            }
+        }
+        // each hop's bend: its own row in its gap
+        var hop_m: i64[] = [];
+        var used: i64[] = [];
+
+        for (let r: i64 in 0..(top + 1)) { used.push(0); }
+
+        for (let h: i64 in 0..nh) {
+            let r: i64 = self.nodes[hop_p[h]].rank;
+            var slot: i64 = used[r];
+
+            if (slots[r] > 0) { slot = slot % slots[r]; }
+            used[r] += 1;
+            hop_m.push(band_at[r] + band_size[r] + 1 + slot);
+        }
+        // labels beside a link: room past the last column
+        var total_cross: i64 = hi - lo + 3;
+
+        if (!across) {
+            for (let h: i64 in 0..nh) {
+                let e: &self::&Edge = &self.edges[hop_e[h]];
+
+                if (e.label.len == 0 || hop_p[h] != e.path[0]) { continue; }
+                let need: i64 = hop_t[h] + 3 + label_w(&e.label);
+
+                if (need > total_cross) { total_cross = need; }
+            }
+        }
+        var w: i64 = total_cross;
+        var h: i64 = total_main;
+
+        if (across) {
+            w = total_main;
+            h = total_cross;
+        }
+        var c: Canvas = canvas(w, h);
+
+        c.title = title;
+
+        // links first (nodes drawn over their ends), then heads and labels
+        for (let k: i64 in 0..nh) {
+            let p: &self::&Node = &self.nodes[hop_p[k]];
+            let q: &self::&Node = &self.nodes[hop_q[k]];
+            let e: &self::&Edge = &self.edges[hop_e[k]];
+            var sty: i64 = e.style;
+
+            if (sty < 0) { sty = 0; }
+            let gm: i64 = hop_m[k];
+            var qm: i64 = q.main - 1;
+
+            if (q.shape == -1) { qm = q.main; }
+            var pts: i64[] = [p.main + p.msize, hop_s[k], gm, hop_s[k], gm, hop_t[k], qm, hop_t[k]];
+            var j: i64 = 0;
+
+            while (j + 3 < pts.len) {
+                let (x1, y1) = place(pts[j], pts[j + 1], across, flip, total_main);
+                let (x2, y2) = place(pts[j + 2], pts[j + 3], across, flip, total_main);
+
+                c.line(x1, y1, x2, y2, sty);
+                j += 2;
+            }
+        }
+        c.finish();
+
+        for (let k: i64 in 0..nh) {
+            let e: &self::&Edge = &self.edges[hop_e[k]];
+            let p: &self::&Node = &self.nodes[hop_p[k]];
+            let q: &self::&Node = &self.nodes[hop_q[k]];
+            // heads: at the end it points to (the start, if laid out reversed)
+            var at_end: i64 = e.head;
+            var at_start: i64 = e.tail;
+
+            if (e.back) {
+                at_end = e.tail;
+                at_start = e.head;
+            }
+            if (at_end > 0 && q.shape >= 0) {
+                let (x, y) = place(q.main - 1, hop_t[k], across, flip, total_main);
+
+                c.put(x, y, head_char(at_end, across, flip, true), K_HEAD);
+            }
+            if (at_start > 0 && hop_p[k] == e.path[0]) {
+                let (x, y) = place(p.main + p.msize, hop_s[k], across, flip, total_main);
+
+                c.put(x, y, head_char(at_start, across, flip, false), K_HEAD);
+            }
+            if (e.label.len > 0 && hop_p[k] == e.path[0]) {
+                let r: i64 = p.rank;
+                let gs: i64 = band_at[r] + band_size[r];
+                let lines: string[] = str::split(e.label, "\n");
+
+                if (across) {
+                    // above the horizontal part after the bends
+                    let (x, y) = place(
+                        gs + slots[r] + 2, hop_t[k] - lines.len, across, flip, total_main
+                    );
+                    var lx: i64 = x;
+
+                    if (flip) { lx = x - label_w(&e.label) + 1; }
+
+                    for (let j: i64, let l: string in &lines) { c.text(lx, y + j, l, K_LABEL); }
+                } else {
+                    // beside the vertical part after the bends
+                    var ly: i64 = gs + slots[r] + 1;
+
+                    if (flip) { ly = gs + slots[r] + lines.len; }
+                    let (x, y) = place(ly, hop_t[k] + 2, across, flip, total_main);
+                    // (left of its line if a line occupies the right)
+                    let lw: i64 = label_w(&e.label);
+                    var lx: i64 = x;
+
+                    if (!c.clear(x, y, lw, lines.len) &&
+                        c.clear(x - 4 - lw + 1, y, lw, lines.len)) {
+                        lx = x - 4 - lw + 1;
+                    }
+
+                    for (let j: i64, let l: string in &lines) { c.text(lx, y + j, l, K_LABEL); }
+                }
+            }
+        }
+
+        for (let n: &self::&Node in &self.nodes) {
+            if (n.shape < 0) { continue; }
+            var mm: i64 = n.main;
+
+            if (flip) { mm = total_main - n.main - n.msize; }
+            var x: i64 = n.cross;
+            var y: i64 = mm;
+            var bw: i64 = n.csize;
+            var bh: i64 = n.msize;
+
+            if (across) {
+                x = mm;
+                y = n.cross;
+                bw = n.msize;
+                bh = n.csize;
+            }
+            // (a state's start and end: a dot)
+            if (str::starts_with(n.id, "[*]")) {
+                c.text(x + bw / 2, y + bh / 2, n.label, K_HEAD);
+                continue;
+            }
+            c.boxed(x, y, bw, bh, n.shape, K_BOX);
+            c.ids.push(n.id);
+            c.mx.push(x + bw / 2);
+            c.my.push(y + bh / 2);
+            let lines: string[] = str::split(n.label, "\n");
+            let ty: i64 = y + (bh - lines.len) / 2;
+
+            for (let j: i64, let l: string in &lines) {
+                let tx: i64 = x + (bw - tui::width(l)) / 2;
+
+                c.text(tx, ty + j, l, K_TEXT);
+            }
+        }
+        return c;
+    }
