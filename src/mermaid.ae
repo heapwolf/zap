@@ -1325,3 +1325,109 @@ impl Graph {
         }
         return out;
     }
+
+    // order rank's nodes by their neighbors' places in rank near (a node
+    // without neighbors keeps its place)
+    fn sort_rank(mut self: &Graph, mut rank: &i64[], near: i64) -> void {
+        var keys: f64[] = [];
+
+        for (let k: i64 in rank) {
+            let nb: i64[] = self.neighbors(k, near);
+
+            if (nb.len == 0) {
+                keys.push(self.nodes[k].order);
+                continue;
+            }
+            var sum: f64 = 0.0;
+
+            for (let m: i64 in &nb) { sum += self.nodes[m].order; }
+            keys.push(sum / (nb.len as f64));
+        }
+        // (insertion sort: stable, and ranks are short)
+        let n: i64 = rank.len;
+
+        for (let i: i64 in 1..n) {
+            var j: i64 = i;
+
+            while (j > 0 && keys[j - 1] > keys[j]) {
+                let t: f64 = keys[j];
+
+                keys[j] = keys[j - 1];
+                keys[j - 1] = t;
+                let u: i64 = rank[j];
+
+                rank[j] = rank[j - 1];
+                rank[j - 1] = u;
+                j -= 1;
+            }
+        }
+
+        for (let j: i64, let k: i64 in rank) { self.nodes[k].order = j as f64; }
+    }
+
+    // move rank's nodes toward their neighbors' middle in rank near, keeping
+    // order, gap apart
+    fn place_rank(mut self: &Graph, rank: &i64[], near: i64, gap: i64) -> void {
+        var want: i64[] = [];
+
+        for (let k: i64 in rank) {
+            let nb: i64[] = self.neighbors(k, near);
+
+            if (nb.len == 0) {
+                want.push(self.nodes[k].cross);
+                continue;
+            }
+            var sum: i64 = 0;
+
+            for (let m: i64 in &nb) { sum += self.nodes[m].cross + self.nodes[m].csize / 2; }
+            want.push(sum / nb.len - self.nodes[k].csize / 2);
+        }
+        // left to right: at its target, past the previous one
+        var fin: i64 = -1000000;
+
+        for (let j: i64, let k: i64 in rank) {
+            var x: i64 = want[j];
+
+            if (x < fin + gap) { x = fin + gap; }
+            self.nodes[k].cross = x;
+            fin = x + self.nodes[k].csize;
+        }
+        // right to left: back toward targets, short of the next one
+        var j: i64 = rank.len - 2;
+
+        while (j >= 0) {
+            let k: i64 = rank[j];
+            let nk: i64 = rank[j + 1];
+            let room: i64 = self.nodes[nk].cross - gap - self.nodes[k].csize;
+
+            if (self.nodes[k].cross > want[j]) {
+                var x: i64 = want[j];
+
+                if (j > 0) {
+                    let pk: i64 = rank[j - 1];
+                    let left: i64 = self.nodes[pk].cross + self.nodes[pk].csize + gap;
+
+                    if (x < left) { x = left; }
+                }
+                if (x < self.nodes[k].cross) { self.nodes[k].cross = x; }
+            } else if (self.nodes[k].cross < want[j]) {
+                var x: i64 = want[j];
+
+                if (x > room) { x = room; }
+                if (x > self.nodes[k].cross) { self.nodes[k].cross = x; }
+            }
+            j -= 1;
+        }
+    }
+}
+
+// canvas position of a point (along the ranks, across them)
+fn place(m: i64, c: i64, across: bool, flip: bool, total: i64) -> (i64, i64) {
+    var mm: i64 = m;
+
+    if (flip) { mm = total - 1 - m; }
+    if (across) {
+        return (mm, c);
+    }
+    return (c, mm);
+}
