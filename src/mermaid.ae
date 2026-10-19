@@ -1233,3 +1233,95 @@ impl Graph {
         }
         return c;
     }
+
+    // node k's middle, across
+    fn mid(self: &Graph, k: i64) -> i64 { return self.nodes[k].cross + self.nodes[k].csize / 2; }
+
+    // give hops (on node k's side) ports along it, ordered by their other
+    // ends (others[h]); ports stay within its border
+    fn spread(self: &Graph, hops: &i64[], mut port: &i64[], others: &i64[], k: i64) -> void {
+        let n: i64 = hops.len;
+
+        if (n < 2) {
+            return;
+        }
+        var order: i64[] = std::copy(*hops);
+
+        for (let i: i64 in 1..n) {
+            var j: i64 = i;
+
+            while (j > 0 && self.mid(others[order[j - 1]]) > self.mid(others[order[j]])) {
+                let t: i64 = order[j];
+
+                order[j] = order[j - 1];
+                order[j - 1] = t;
+                j -= 1;
+            }
+        }
+        let room: i64 = self.nodes[k].csize - 2;
+
+        if (room < 1) {
+            return;
+        }
+
+        for (let i: i64, let h: i64 in &order) {
+            port[h] = self.nodes[k].cross + 1 + ((2 * i + 1) * room) / (2 * n);
+        }
+    }
+
+    // mark links that would close a cycle as laid out b to a (a walk from
+    // each node in order: a link back to a node on the current path)
+    fn break_cycles(mut self: &Graph) -> void {
+        let n: i64 = self.nodes.len;
+        var state: i64[] = [];  // 0 unseen, 1 on the path, 2 done
+
+        for (let k: i64 in 0..n) { state.push(0); }
+
+        for (let root: i64 in 0..n) {
+            if (state[root] != 0) { continue; }
+            // iterative walk: the nodes on the path, and each one's next link
+            var stack: i64[] = [root];
+            var nxt: i64[] = [0];
+
+            state[root] = 1;
+
+            while (stack.len > 0) {
+                let v: i64 = stack[stack.len - 1];
+                let i: i64 = nxt[nxt.len - 1];
+
+                if (i >= self.edges.len) {
+                    state[v] = 2;
+                    stack.pop();
+                    nxt.pop();
+                    continue;
+                }
+                nxt[nxt.len - 1] = i + 1;
+                if (self.edges[i].a != v || self.edges[i].b == v) { continue; }
+                let w: i64 = self.edges[i].b;
+
+                if (state[w] == 1) {
+                    self.edges[i].back = true;
+                } else if (state[w] == 0) {
+                    state[w] = 1;
+                    stack.push(w);
+                    nxt.push(0);
+                }
+            }
+        }
+    }
+
+    // nodes in rank r joined to k by path links
+    fn neighbors(self: &Graph, k: i64, r: i64) -> i64[] {
+        var out: i64[] = [];
+
+        for (let e: &self::&Edge in &self.edges) {
+            for (let j: i64 in 0..e.path.len) {
+                if (e.path[j] != k) { continue; }
+                if (j > 0 && self.nodes[e.path[j - 1]].rank == r) { out.push(e.path[j - 1]); }
+                if (j + 1 < e.path.len && self.nodes[e.path[j + 1]].rank == r) {
+                    out.push(e.path[j + 1]);
+                }
+            }
+        }
+        return out;
+    }
