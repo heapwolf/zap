@@ -1431,3 +1431,56 @@ fn place(m: i64, c: i64, across: bool, flip: bool, total: i64) -> (i64, i64) {
     }
     return (c, mm);
 }
+
+// a link head character: an arrow in rank direction (at its end), or back (at its start)
+fn head_char(kind: i64, across: bool, flip: bool, at_end: bool) -> i64 {
+    if (kind == 2) {                        // ×
+        return 0x00D7;
+    }
+    if (kind == 3) {                        // ○
+        return 0x25CB;
+    }
+    var forward: bool = at_end != flip;
+
+    if (across) {
+        if (forward) {                      // ▶
+            return 0x25B6;
+        }
+        return 0x25C0;                      // ◀
+    }
+    if (forward) {                          // ▼
+        return 0x25BC;
+    }
+    return 0x25B2;                          // ▲
+}
+
+// ---- sequence diagrams -----------------------------------------------------------------
+
+struct Actor {
+    id: string;
+    label: string;
+    actor: bool = false;
+    x: i64 = 0;  // its lifeline's column
+    w: i64 = 0;
+}
+
+// sequence events in order: message, note, block start, else, end
+struct Event {
+    kind: i64;            // 0 message, 1 note, 2 block start, 3 else / and, 4 block end
+    a: i64 = 0;
+    b: i64 = 0;
+    text: string = "";
+    dotted: bool = false;
+    head: i64 = 0;        // 0 none, 1 arrow, 2 x, 3 async (open arrow)
+    side: i64 = 0;        // note: 0 left of, 1 right of, 2 over
+}
+
+fn actor_of(mut actors: &Actor[], id: string) -> i64 {
+    for (let k: i64, let a: &actors::&Actor in actors) {
+        if (str::eq(a.id, id)) {
+            return k;
+        }
+    }
+    actors.push(Actor { id: id, label: id });
+    return actors.len - 1;
+}
