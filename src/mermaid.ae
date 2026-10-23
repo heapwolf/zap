@@ -1484,3 +1484,73 @@ fn actor_of(mut actors: &Actor[], id: string) -> i64 {
     actors.push(Actor { id: id, label: id });
     return actors.len - 1;
 }
+
+fn sequence(stmts: &string[], z: i64) -> Canvas {
+    var actors: Actor[] = [];
+    var events: Event[] = [];
+    var number: bool = false;
+    let arrows: string[] = ["-->>", "->>", "-->", "->", "--x", "-x", "--)", "-)"];
+
+    for (let k: i64 in 1..stmts.len) {
+        let l: string = stmts[k];
+        let f: string[] = str::fields(l);
+        let w: string = f[0];
+
+        if (str::eq(w, "participant") || str::eq(w, "actor")) {
+            var rest: string = str::trim(str::substr(l, w.len, l.len - w.len));
+            var label: string = "";
+
+            if (let q = str::find(rest, " as ")) {
+                label = clean(str::substr(rest, q + 4, rest.len - q - 4));
+                rest = str::trim(str::substr(rest, 0, q));
+            }
+            let i: i64 = actor_of(mut &actors, rest);
+
+            if (label.len > 0) { actors[i].label = label; }
+            actors[i].actor = str::eq(w, "actor");
+            continue;
+        }
+        if (str::eq(w, "autonumber")) {
+            number = true;
+            continue;
+        }
+        if (str::eq(w, "activate") || str::eq(w, "deactivate") || str::eq(w, "title") ||
+            str::eq(w, "box") || str::eq(w, "create") || str::eq(w, "destroy") ||
+                str::eq(w, "link") ||
+            str::eq(w, "links")) {
+            continue;
+        }
+        if (str::eq(w, "loop") || str::eq(w, "alt") || str::eq(w, "opt") || str::eq(w, "par") ||
+            str::eq(w, "critical") || str::eq(w, "break") || str::eq(w, "rect")) {
+            events.push(Event { kind: 2, text: l });
+            continue;
+        }
+        if (str::eq(w, "else") || str::eq(w, "and") || str::eq(w, "option")) {
+            events.push(Event { kind: 3, text: l });
+            continue;
+        }
+        if (str::eq(w, "end")) {
+            events.push(Event { kind: 4 });
+            continue;
+        }
+        if (str::eq(str::to_lower(w), "note")) {
+            let c: i64 = str::find(l, ":") ?? l.len;
+            let spec: string = str::trim(str::substr(l, w.len, c - w.len));
+            var text: string = "";
+
+            if (c < l.len) { text = clean(str::substr(l, c + 1, l.len - c - 1)); }
+            var side: i64 = 2;
+            var who: string = spec;
+
+            if (str::starts_with(spec, "left of")) {
+                side = 0;
+                who = str::trim(str::substr(spec, 7, spec.len - 7));
+            } else if (str::starts_with(spec, "right of")) {
+                side = 1;
+                who = str::trim(str::substr(spec, 8, spec.len - 8));
+            } else if (str::starts_with(spec, "over")) {
+                who = str::trim(str::substr(spec, 4, spec.len - 4));
+            }
+            let parts: string[] = str::split(who, ",");
+            let a: i64 = actor_of(mut &actors, str::trim(parts[0]));
+            var b: i64 = a;
