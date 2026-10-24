@@ -1554,3 +1554,79 @@ fn sequence(stmts: &string[], z: i64) -> Canvas {
             let parts: string[] = str::split(who, ",");
             let a: i64 = actor_of(mut &actors, str::trim(parts[0]));
             var b: i64 = a;
+
+            if (parts.len > 1) { b = actor_of(mut &actors, str::trim(parts[1])); }
+            events.push(Event { kind: 1, a: a, b: b, text: text, side: side });
+            continue;
+        }
+        // a message: A->>B: text (+ and - before B: activation, ignored)
+        var found: i64 = -1;
+        var arrow: string = "";
+
+        for (let ar: string in &arrows) {
+            if (let p = str::find(l, ar)) {
+                if (found < 0 || p < found || (p == found && ar.len > arrow.len)) {
+                    found = p;
+                    arrow = ar;
+                }
+            }
+        }
+        if (found < 0) { continue; }
+        let a_id: string = str::trim(str::substr(l, 0, found));
+        var rest: string = str::substr(l, found + arrow.len, l.len - found - arrow.len);
+        var text: string = "";
+
+        if (let c = str::find(rest, ":")) {
+            text = clean(str::substr(rest, c + 1, rest.len - c - 1));
+            rest = str::substr(rest, 0, c);
+        }
+        var b_id: string = str::trim(rest);
+
+        b_id = str::trim_prefix(str::trim_prefix(b_id, "+"), "-");
+        if (a_id.len == 0 || b_id.len == 0) { continue; }
+        let a: i64 = actor_of(mut &actors, a_id);
+        let b: i64 = actor_of(mut &actors, b_id);
+        var head: i64 = 0;
+
+        if (str::ends_with(arrow, ">>")) { head = 1; }
+        if (str::ends_with(arrow, "x")) { head = 2; }
+        if (str::ends_with(arrow, ")")) { head = 3; }
+        events.push(Event {
+            kind: 0, a: a, b: b, text: text, dotted: str::starts_with(arrow, "--"), head: head
+        });
+    }
+    if (actors.len == 0) {
+        return failed("no participants", "sequence");
+    }
+    // numbers before the messages
+    if (number) {
+        var n: i64 = 1;
+
+        for (let k: i64 in 0..events.len) {
+            if (events[k].kind == 0) {
+                events[k].text = "\(n) \(events[k].text)";
+                n += 1;
+            }
+        }
+    }
+    // zoomed out: words truncated
+    let cap: i64 = cap_of(z);
+
+    for (let k: i64 in 0..actors.len) { actors[k].label = cut(&actors[k].label, cap); }
+
+    for (let k: i64 in 0..events.len) { events[k].text = cut(&events[k].text, cap); }
+    // columns: room for each box and the messages between them
+    var pad: i64 = 1 + z;
+
+    if (pad < 0) { pad = 0; }
+    let n: i64 = actors.len;
+
+    for (let k: i64 in 0..n) { actors[k].w = label_w(&actors[k].label) + 2 + 2 * pad; }
+    var gaps: i64[] = [];
+
+    for (let k: i64 in 0..n) {
+        var g: i64 = 4 + 2 * z;
+
+        if (g < 2) { g = 2; }
+        gaps.push(g);
+    }
