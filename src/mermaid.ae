@@ -1779,3 +1779,121 @@ fn sequence(stmts: &string[], z: i64) -> Canvas {
             y += 1 + space;
         }
     }
+
+    // blocks: a line across with their words on it
+    for (let q: i64 in 0..mark_y.len) {
+        let my: i64 = mark_y[q];
+        let mk: i64 = mark_k[q];
+        let mt: string = mark_t[q];
+        var sty: i64 = 16;
+
+        c.line(left, my, right - 1, my, sty);
+        if (mk == 2 || mk == 3) { c.text(left + 1, my, " \(mt) ", K_FRAME); }
+        if (mk == 4) { c.text(left + 1, my, " end ", K_FRAME); }
+    }
+    c.finish();
+
+    // participants: a box at top and bottom, over their lifelines' ends
+    for (let a: &actors::&Actor in &actors) {
+        let bx: i64 = a.x - a.w / 2;
+        var shape: i64 = 0;
+
+        if (a.actor) { shape = 1; }
+        c.boxed(bx, 0, a.w, 3, shape, K_BOX);
+        c.text(a.x - tui::width(a.label) / 2, 1, a.label, K_TEXT);
+        c.boxed(bx, h - 3, a.w, 3, shape, K_BOX);
+        c.text(a.x - tui::width(a.label) / 2, h - 2, a.label, K_TEXT);
+    }
+    return c;
+}
+
+fn seq_head(kind: i64, right: bool) -> i64 {
+    if (kind == 2) {
+        return 0x00D7;
+    }
+    if (kind == 3) {
+        if (right) {
+            return ')' as i64;
+        }
+        return '(' as i64;
+    }
+    if (right) {
+        return 0x25B6;
+    }
+    return 0x25C0;
+}
+
+// ---- tests -----------------------------------------------------------------------------
+
+// the canvas rows as text
+fn rows_of(c: &Canvas) -> string[] {
+    var out: string[] = [];
+
+    for (let y: i64 in 0..c.h) {
+        let (texts, kinds) = c.runs(y, 0, c.w);
+
+        out.push(str::trim_end(str::join(&texts, "")));
+    }
+    return out;
+}
+
+fn has(rows: &string[], s: string) -> bool {
+    for (let r: string in rows) {
+        if (str::contains(r, s)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+#test fn draws_a_flowchart() -> i32 {
+    let c: Canvas = draw(
+        "graph TD\n  A[Start] --> B{Is it?}\n  B -->|Yes| C[OK]\n  B -- No --> D[Fix]\n  D --> B", 0
+    );
+
+    if (c.error.len > 0) {
+        return 1;
+    }
+    let rows: string[] = rows_of(&c);
+
+    if (process::env("ZAP_SHOW").len > 0) { println(str::join(&rows, "\n")); }
+    if (!has(&rows, "│ Start │") || !has(&rows, "│ Is it? │") || !has(&rows, "│ OK │") ||
+        !has(&rows, "◇")) {
+        println(str::join(&rows, "\n"));
+        return 2;
+    }
+    if (!has(&rows, "▼") || !has(&rows, "Yes") || !has(&rows, "No")) {
+        return 3;
+    }
+    // Start above Is it, above OK and Fix
+    var ys: i64 = -1;
+    var yb: i64 = -1;
+    var yc: i64 = -1;
+
+    for (let y: i64, let r: string in &rows) {
+        if (str::contains(r, "Start")) { ys = y; }
+        if (str::contains(r, "Is it?")) { yb = y; }
+        if (str::contains(r, "OK")) { yc = y; }
+    }
+    if (!(ys < yb && yb < yc)) {
+        return 4;
+    }
+    return 0;
+}
+
+#test fn zooms_out_with_ellipses() -> i32 {
+    let src: string = "graph TD\n  A[a rather long first step] --> B[and a second one]";
+    let near: Canvas = draw(src, 0);
+    let far: Canvas = draw(src, -4);
+    let rows: string[] = rows_of(&far);
+
+    if (process::env("ZAP_SHOW").len > 0) { println(str::join(&rows, "\n")); }
+    if (!has(&rows, "│a rat…│") || has(&rows, "rather long") || far.w >= near.w) {
+        println(str::join(&rows, "\n"));
+        return 1;
+    }
+    if (cap_of(0) != 0 || cap_of(-1) != 20 || cap_of(-9) != 3) {
+        return 2;
+    }
+    return 0;
+}
