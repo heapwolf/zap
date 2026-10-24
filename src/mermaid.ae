@@ -1704,3 +1704,78 @@ fn sequence(stmts: &string[], z: i64) -> Canvas {
     var mark_y: i64[] = [];     // block lines: their rows, kinds, texts
     var mark_k: i64[] = [];
     var mark_t: string[] = [];
+
+    for (let e: &events::&Event in &events) {
+        if (e.kind == 0) {
+            let lines: string[] = str::split(e.text, "\n");
+            let ax: i64 = actors[e.a].x;
+            let bx: i64 = actors[e.b].x;
+            var sty: i64 = 0;
+
+            if (e.dotted) { sty = 16; }
+            if (e.a == e.b) {
+                for (let j: i64, let l: string in &lines) { c.text(ax + 2, y + j, l, K_LABEL); }
+                y += lines.len;
+                c.line(ax, y, ax + 3, y, sty);
+                c.line(ax + 3, y, ax + 3, y + 1, sty);
+                c.line(ax, y + 1, ax + 3, y + 1, sty);
+                if (e.head > 0) { c.put(ax + 1, y + 1, seq_head(e.head, false), K_HEAD); }
+                y += 2 + space;
+                continue;
+            }
+            var lo: i64 = ax;
+
+            if (bx < lo) { lo = bx; }
+            let mid: i64 = (ax + bx) / 2;
+
+            for (let j: i64, let l: string in &lines) {
+                var tx: i64 = mid - tui::width(l) / 2;
+
+                if (tx < lo + 1) { tx = lo + 1; }
+                c.text(tx, y + j, l, K_LABEL);
+            }
+            y += lines.len;
+            c.line(ax, y, bx, y, sty);
+            if (e.head > 0) {
+                if (bx > ax) {
+                    c.put(bx - 1, y, seq_head(e.head, true), K_HEAD);
+                } else {
+                    c.put(bx + 1, y, seq_head(e.head, false), K_HEAD);
+                }
+            }
+            y += 1 + space;
+        } else if (e.kind == 1) {
+            let lines: string[] = str::split(e.text, "\n");
+            let tw: i64 = label_w(&e.text) + 4;
+            var nx: i64 = actors[e.a].x - tw / 2;
+            var nw: i64 = tw;
+
+            if (e.side == 0) { nx = actors[e.a].x - 2 - tw; }
+            if (e.side == 1) { nx = actors[e.a].x + 2; }
+            if (e.side == 2 && e.b != e.a) {
+                var lo: i64 = actors[e.a].x;
+                var hi: i64 = actors[e.b].x;
+
+                if (hi < lo) {
+                    lo = actors[e.b].x;
+                    hi = actors[e.a].x;
+                }
+                nx = lo - 2;
+                nw = hi - lo + 5;
+                if (nw < tw) {
+                    nx = (lo + hi) / 2 - tw / 2;
+                    nw = tw;
+                }
+            }
+            if (nx < 0) { nx = 0; }
+            c.boxed(nx, y, nw, lines.len + 2, 0, K_NOTE);
+
+            for (let j: i64, let l: string in &lines) { c.text(nx + 2, y + 1 + j, l, K_NOTE); }
+            y += lines.len + 2 + space;
+        } else {
+            mark_y.push(y);
+            mark_k.push(e.kind);
+            mark_t.push(e.text);
+            y += 1 + space;
+        }
+    }
