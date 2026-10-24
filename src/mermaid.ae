@@ -1630,3 +1630,77 @@ fn sequence(stmts: &string[], z: i64) -> Canvas {
         if (g < 2) { g = 2; }
         gaps.push(g);
     }
+
+    // (gaps[k]: from k's lifeline to k + 1's)
+    for (let k: i64 in 0..(n - 1)) {
+        let need: i64 = actors[k].w / 2 + (actors[k + 1].w + 1) / 2 + 2;
+
+        if (gaps[k] < need) { gaps[k] = need; }
+    }
+
+    for (let e: &events::&Event in &events) {
+        if (e.kind != 0 || e.a == e.b) { continue; }
+        var lo: i64 = e.a;
+        var hi: i64 = e.b;
+
+        if (hi < lo) {
+            lo = e.b;
+            hi = e.a;
+        }
+        let need: i64 = label_w(&e.text) + 4;
+        var have: i64 = 0;
+
+        for (let k: i64 in lo..hi) { have += gaps[k]; }
+        if (have < need) {
+            let more: i64 = need - have;
+            let span: i64 = hi - lo;
+
+            for (let k: i64 in lo..hi) { gaps[k] += (more + span - 1) / span; }
+        }
+    }
+    var x: i64 = actors[0].w / 2 + 2;
+
+    for (let k: i64 in 0..n) {
+        actors[k].x = x;
+        x += gaps[k];
+    }
+    var right: i64 = actors[n - 1].x + (actors[n - 1].w + 1) / 2 + 2;
+
+    // room past the last column for notes and self-messages
+    for (let e: &events::&Event in &events) {
+        var need: i64 = 0;
+
+        if (e.kind == 0 && e.a == e.b) { need = actors[e.a].x + 4 + label_w(&e.text) + 2; }
+        if (e.kind == 1 && e.side == 1) { need = actors[e.a].x + 3 + label_w(&e.text) + 4; }
+        if (need > right) { right = need; }
+    }
+    // rows: the boxes, each event, then the boxes again
+    var space: i64 = 1;
+
+    if (z >= 2) { space = 2; }
+    if (z < 0) { space = 0; }
+    var h: i64 = 3 + 1;
+
+    for (let e: &events::&Event in &events) {
+        if (e.kind == 0) {
+            h += str::split(e.text, "\n").len + 1 + space;
+            if (e.a == e.b) { h += 1; }
+        } else if (e.kind == 1) {
+            h += str::split(e.text, "\n").len + 2 + space;
+        } else {
+            h += 1 + space;
+        }
+    }
+    h += 3;
+    var c: Canvas = canvas(right, h);
+
+    c.title = "sequence";
+
+    // the lifelines
+    for (let a: &actors::&Actor in &actors) { c.line(a.x, 3, a.x, h - 4, 16); }
+    var y: i64 = 4;
+    var depth: i64 = 0;
+    let left: i64 = 0;
+    var mark_y: i64[] = [];     // block lines: their rows, kinds, texts
+    var mark_k: i64[] = [];
+    var mark_t: string[] = [];
