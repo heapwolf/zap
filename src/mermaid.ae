@@ -1897,3 +1897,83 @@ fn has(rows: &string[], s: string) -> bool {
     }
     return 0;
 }
+
+#test fn draws_left_to_right() -> i32 {
+    let c: Canvas = draw("flowchart LR\n  a([one]) ==> b((two)) -.-> c[[three]]\n  a --- c", 1);
+    let rows: string[] = rows_of(&c);
+
+    if (process::env("ZAP_SHOW").len > 0) { println(str::join(&rows, "\n")); }
+    if (!has(&rows, "▶") || !has(&rows, "━") || !has(&rows, "┄") || !has(&rows, "║")) {
+        println(str::join(&rows, "\n"));
+        return 1;
+    }
+    var xa: i64 = -1;
+    var xb: i64 = -1;
+
+    for (let r: string in &rows) {
+        if (let p = str::find(r, "one")) { xa = p; }
+        if (let p = str::find(r, "two")) { xb = p; }
+    }
+    if (!(xa >= 0 && xa < xb)) {
+        return 2;
+    }
+    return 0;
+}
+
+#test fn draws_a_sequence() -> i32 {
+    let c: Canvas = draw(
+        "sequenceDiagram\n  autonumber\n  participant A as Alice\n  A->>B: Hello Bob\n  B-->>A: Hi\n  loop every minute\n    A->A: think\n  end\n  Note right of B: a note",
+        0
+    );
+    let rows: string[] = rows_of(&c);
+
+    if (process::env("ZAP_SHOW").len > 0) { println(str::join(&rows, "\n")); }
+    if (!has(&rows, "Alice") || !has(&rows, "1 Hello Bob") || !has(&rows, "2 Hi")) {
+        println(str::join(&rows, "\n"));
+        return 1;
+    }
+    if (!has(&rows, "▶") || !has(&rows, "◀") || !has(&rows, "loop every minute") ||
+        !has(&rows, "a note") || !has(&rows, " end ")) {
+        println(str::join(&rows, "\n"));
+        return 2;
+    }
+    return 0;
+}
+
+#test fn draws_states_and_says_what_it_cannot() -> i32 {
+    let c: Canvas = draw(
+        "stateDiagram-v2\n  [*] --> Still\n  Still --> Moving : push\n  Moving --> [*]", 0
+    );
+    let rows: string[] = rows_of(&c);
+
+    if (process::env("ZAP_SHOW").len > 0) { println(str::join(&rows, "\n")); }
+    if (!has(&rows, "●") || !has(&rows, "Still") || !has(&rows, "push") || !has(&rows, "◉")) {
+        println(str::join(&rows, "\n"));
+        return 1;
+    }
+    let p: Canvas = draw("pie title Pets\n  \"Dogs\" : 3", 0);
+
+    if (!str::contains(p.error, "not drawn yet")) {
+        return 2;
+    }
+    return 0;
+}
+
+#test fn reads_slanted_shapes() -> i32 {
+    let c: Canvas = draw(
+        "graph TD\n  A[/para/] --> B[\\alt\\]\n  B --> C[/trap\\]\n  C --> D[\\inv/]", 0
+    );
+
+    if (c.error.len > 0) {
+        return 1;
+    }
+    let rows: string[] = rows_of(&c);
+
+    if (process::env("ZAP_SHOW").len > 0) { println(str::join(&rows, "\n")); }
+    if (!has(&rows, "para") || !has(&rows, "alt") || !has(&rows, "trap") || !has(&rows, "inv") ||
+        has(&rows, "/]") || has(&rows, "\\]")) {
+        println(str::join(&rows, "\n"));
+        return 2;
+    }
+    return 0;
+}
