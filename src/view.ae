@@ -213,6 +213,88 @@ export struct DiagramPane(A) {
     export look: Look;
 }
 
+impl DiagramPane(A) as Node(A) {
+    export fn measure(self: &DiagramPane(A), avail: i64) -> Size { return Size { w: 0, h: 0 }; }
+
+    export fn sizing(self: &DiagramPane(A)) -> Sizing {
+        return Sizing { w: tui::fill(1), h: tui::fill(1) };
+    }
+
+    export fn render(self: &DiagramPane(A), mut f: &Frame(A), area: Rect) -> void {
+        let lk: &self::&Look = &self.look;
+
+        f.fill(std::copy(area), &lk.normal);
+
+        if (area.h < 1) {
+            return;
+        }
+
+        f.fill(Rect { x: area.x, y: area.y, w: area.w, h: 1 }, &lk.sheet_bar);
+        f.text(area.x + 1, area.y, self.vis.bar, &lk.sheet_bar, area.w - 1);
+        // a syntax group color per cell kind (mermaid.ae's K_*)
+        let groups: i64[] = [0, 4, 0, 9, 3, 2, 1, 7, 19];
+        var styles: tui::Style[] = [];
+
+        for (let g: i64 in &groups) { styles.push(tui::merge(&lk.normal, &lk.syn[g])); }
+
+        for (let y: i64, let texts: &self::&string[] in &self.vis.texts) {
+            if (y + 1 >= area.h) { break; }
+            var x: i64 = area.x;
+
+            for (let k: i64, let t: string in texts) {
+                var kind: i64 = self.vis.kinds[y][k];
+
+                if (kind < 0 || kind >= styles.len) { kind = 0; }
+                x += f.text(x, area.y + 1 + y, t, &styles[kind], area.x + area.w - x);
+            }
+        }
+    }
+}
+
+/// a spreadsheet's window: the formula bar, column letters, the rows
+/// (numbered on the left; a header row bold, pinned at the top)
+export struct SheetPane(A) {
+    export vis: SheetVis;
+    export look: Look;
+    export editing: bool;           // the bar edits a cell: prompt, input, cursor
+    export prompt: string;
+    export input: string;
+    export at: i64;
+}
+
+impl SheetPane(A) as Node(A) {
+    export fn measure(self: &SheetPane(A), avail: i64) -> Size { return Size { w: 0, h: 0 }; }
+
+    export fn sizing(self: &SheetPane(A)) -> Sizing {
+        return Sizing { w: tui::fill(1), h: tui::fill(1) };
+    }
+
+    export fn render(self: &SheetPane(A), mut f: &Frame(A), area: Rect) -> void {
+        let lk: &self::&Look = &self.look;
+
+        f.fill(std::copy(area), &lk.normal);
+        if (area.h < 1) {
+            return;
+        }
+        f.fill(Rect { x: area.x, y: area.y, w: area.w, h: 1 }, &lk.sheet_bar);
+        if (self.editing) {
+            var pst: tui::Style = std::copy(lk.sheet_bar);
+
+            pst.bold = true;
+            let pw: i64 = f.text(area.x + 1, area.y, self.prompt, &pst, area.w - 1);
+            let x0: i64 = area.x + 1 + pw;
+            // (scroll the text so the cursor shows)
+            let cw: i64 = tui::width(str::substr(self.input, 0, self.at));
+            var skip: i64 = 0;
+
+            if (cw >= area.w - 1 - pw) { skip = cw - (area.w - 2 - pw); }
+            var t: string = self.input;
+
+            if (skip > 0) {
+                // (drop its first skip cells)
+                var i: i64 = 0;
+                var gone: i64 = 0;
+
                 while (i < t.len && gone < skip) {
                     let j: i64 = next_char(&t, i);
 
