@@ -1,0 +1,271 @@
+//! Mermaid: diagram type (graph LR, sequenceDiagram, ...) and statement
+//! keywords, %% comments and %%{ }%% directives, links and arrows (-->,
+//! ->>, ==>, -.->, ||--o{), |labels|, node text (id[text], id((text)),
+//! id{text}), text after a : (a message, a label; a number in a pie),
+//! "strings", :::classes, and --- front matter.
+//!
+//! State: 0 diagram, 1 in front matter.
+
+import str from "std/string";
+import {
+    Hl, Group, add, is_ident_start, is_ident, is_digit, is_space, limit_to, string_end, number_end,
+    Words, words
+} from "core.ae";
+
+/// diagram types and statement-starting keywords
+export let KEYWORDS: string[] = [
+    "graph", "flowchart", "sequenceDiagram", "classDiagram", "stateDiagram", "stateDiagram-v2",
+    "erDiagram", "journey", "gantt", "pie", "gitGraph", "mindmap", "timeline", "quadrantChart",
+    "requirementDiagram", "C4Context", "C4Container", "C4Component", "C4Dynamic", "C4Deployment",
+    "sankey-beta", "xychart-beta", "block-beta", "packet-beta", "kanban", "architecture-beta",
+    "radar-beta", "zenuml",
+    "subgraph", "end", "direction", "classDef", "class", "style", "linkStyle", "click", "call",
+    "participant", "actor", "loop", "alt", "else", "opt", "par", "and", "critical", "break",
+    "rect", "note", "Note", "activate", "deactivate", "autonumber", "box", "create", "destroy",
+    "title", "section", "dateFormat", "axisFormat", "tickInterval", "excludes", "includes",
+    "todayMarker", "weekday", "state", "accTitle", "accDescr", "commit", "branch", "checkout",
+    "merge", "cherry-pick", "showData", "x-axis", "y-axis", "quadrant-1", "quadrant-2",
+    "quadrant-3", "quadrant-4", "line", "bar", "columns", "namespace", "link", "links"
+];
+
+/// words that appear after a statement's first word
+export let CONSTANTS: string[] = [
+    "TB", "TD", "BT", "RL", "LR", "as", "of", "over", "left", "right", "href", "callback",
+    "id", "type", "tag", "order", "done", "active", "crit", "milestone", "after", "until"
+];
+
+// each, for lookup (separate: which applies depends on word position)
+let KEYWORD_WORDS: Words = words(&[std::copy(KEYWORDS)]);
+let CONSTANT_WORDS: Words = words(&[std::copy(CONSTANTS)]);
+
+// end of a word: letters, digits, _ and - (stateDiagram-v2, cherry-pick)
+fn word_end(text: &string, i: i64, n: i64) -> i64 {
+    var j: i64 = i;
+
+    while (j < n && (is_ident(text[j]) || (text[j] == '-' && j + 1 < n && is_ident(text[j + 1]) &&
+        j > i))) {
+        j += 1;
+    }
+    return j;
+}
+
+// can c be in a link (-->, ==>, -.->, <-->, ->>, --x, ||--o{)?
+fn link_char(c: u8) -> bool {
+    return c == '-' || c == '=' || c == '.' || c == '<' || c == '>' || c == '~';
+}
+
+// end of the link at i (-1: none; a lone - or > is not a link)
+fn link_end(text: &string, i: i64, n: i64) -> i64 {
+    var j: i64 = i;
+
+    // (ER diagram ends: |o, }|, o{, ||)
+    while (j < n && (link_char(text[j]) || ((text[j] == 'x' || text[j] == 'o') && j > i &&
+        link_char(text[j - 1]) && (j + 1 >= n || !is_ident(text[j + 1]))))) {
+        j += 1;
+    }
+    if (j - i < 2) {
+        return -1;
+    }
+    var lines: bool = false;
+
+    for (let k: i64 in i..j) {
+        if (text[k] == '-' || text[k] == '=' || text[k] == '~') { lines = true; }
+    }
+    if (!lines) {
+        return -1;
+    }
+    return j;
+}
+
+// the closer for node text opened with c
+fn closer(c: u8) -> u8 {
+    if (c == '[') {
+        return ']';
+    }
+    if (c == '(') {
+        return ')';
+    }
+    if (c == '{') {
+        return '}';
+    }
+    return ']';         // >text]
+}
+
+/// lex a Mermaid line, from state -> next line's state
+export fn line(text: &string, lo: i64, hi: i64, state: i64, mut out: &Hl[]) -> i64 {
+    let n: i64 = limit_to(text, lo, hi);
+    var first: i64 = lo;
+
+    while (first < n && is_space(text[first])) { first += 1; }
+    let rest: string = str::trim(str::substr(*text, first, n - first));
+
+    // front matter: --- to ---, key: value
+    if (str::eq(rest, "---")) {
+        add(out, first, n, Group::Punct);
+        if (state == 1) {
+            return 0;
+        }
+        return 1;
+    }
+    if (state == 1) {
+        let colon: i64 = str::find_from(*text, ":", first) ?? -1;
+
+        if (colon > first && colon < n) {
+            add(out, first, colon, Group::Type);
+            add(out, colon, colon + 1, Group::Operator);
+            add(out, colon + 1, n, Group::String);
+        }
+        return 1;
+    }
+    var i: i64 = first;
+
+    while (i < n) {
+        let c: u8 = text[i];
+        var c2: u8 = 0;
+
+        if (i + 1 < n) { c2 = text[i + 1]; }
+        if (c == '%' && c2 == '%') {
+            if (i + 2 < n && text[i + 2] == '{') {
+                let close: i64 = str::find_from(*text, "}%%", i + 3) ?? -1;
+
+                if (close > 0 && close + 3 <= n) {
+                    add(out, i, close + 3, Group::Constant);
+                    i = close + 3;
+                    continue;
+                }
+            }
+            add(out, i, n, Group::Comment);
+            return 0;
+        }
+        if (c == '"') {
+            let j: i64 = string_end(text, i, n, '"');
+
+            add(out, i, j, Group::String);
+            i = j;
+            continue;
+        }
+        // a link's |label|
+        if (c == '|' && c2 != '|' && c2 != 'o' &&
+            !(i > lo && (text[i - 1] == '|' || text[i - 1] == '}'))) {
+            let close: i64 = str::find_from(*text, "|", i + 1) ?? -1;
+
+            if (close > i && close < n) {
+                add(out, i, i + 1, Group::Punct);
+                add(out, i + 1, close, Group::String);
+                add(out, close, close + 1, Group::Punct);
+                i = close + 1;
+                continue;
+            }
+        }
+        // a : and the text after it: a message, label, or value
+        if (c == ':' && c2 != ':') {
+            add(out, i, i + 1, Group::Operator);
+            var j: i64 = i + 1;
+
+            while (j < n && is_space(text[j])) { j += 1; }
+            let v: string = str::trim(str::substr(*text, j, n - j));
+            var number: bool = v.len > 0;
+
+            for (let k: i64 in 0..v.len) {
+                if (!is_digit(v[k]) && v[k] != '.' && v[k] != '-') { number = false; }
+            }
+            let pc: i64 = str::find_from(*text, "%%", j) ?? n;
+            var e: i64 = n;
+
+            if (pc < n) { e = pc; }
+            if (number) { add(out, j, e, Group::Number); } else { add(out, j, e, Group::String); }
+            i = e;
+            continue;
+        }
+        if (c == ':' && c2 == ':' && i + 2 < n && text[i + 2] == ':') {
+            let e: i64 = word_end(text, i + 3, n);
+
+            add(out, i, e, Group::Constant);        // :::aClass
+            i = e;
+            continue;
+        }
+        if (link_char(c) || c == '|' || c == '}') {
+            // (ER diagram ends: |o ||, }o }| on the left; o| || o{ |{ on the right)
+            var s: i64 = i;
+
+            if ((c == '|' || c == '}') && i + 1 < n && (text[i + 1] == 'o' || text[i + 1] == '|')) {
+                s = i + 2;
+            }
+            let e: i64 = link_end(text, s, n);
+
+            if (e > s) {
+                var f: i64 = e;
+
+                if (f + 1 < n && (text[f] == 'o' || text[f] == '|') &&
+                    (text[f + 1] == '|' || text[f + 1] == '{')) {
+                    f += 2;
+                } else if (f < n && (text[f] == '{' || text[f] == '|') && text[f - 1] == 'o') {
+                    f += 1;
+                }
+                add(out, i, f, Group::Operator);
+                i = f;
+                continue;
+            }
+        }
+        if (is_digit(c)) {
+            let j: i64 = number_end(text, i, n);
+
+            add(out, i, j, Group::Number);
+            i = j;
+            continue;
+        }
+        if (is_ident_start(c)) {
+            let j: i64 = word_end(text, i, n);
+
+            if (i == first && KEYWORD_WORDS.kind_at(text, i, j) >= 0) {
+                add(out, i, j, Group::Keyword);
+            } else if (i != first && CONSTANT_WORDS.kind_at(text, i, j) >= 0) {
+                add(out, i, j, Group::Constant);
+            } else if (j < n && (text[j] == '[' || text[j] == '(' || text[j] == '{' ||
+                text[j] == '>')) {
+                // a node and its text: id[text], id((text)), id{{text}}, id>text]
+                add(out, i, j, Group::Function);
+                let open: u8 = text[j];
+                let cl: u8 = closer(open);
+                var a: i64 = j;
+
+                while (a < n && a - j < 2 &&
+                    (text[a] == open || text[a] == '/' || text[a] == '\\' ||
+                    (open == '[' && text[a] == '(') || (open == '(' && text[a] == '['))) {
+                    a += 1;
+                }
+                var b: i64 = a;
+
+                while (b < n && text[b] != cl) {
+                    if (text[b] == '"') { b = string_end(text, b, n, '"'); } else { b += 1; }
+                }
+                var z: i64 = b;
+
+                while (z < n && z - b < 3 && (text[z] == ']' || text[z] == ')' || text[z] == '}' ||
+                    text[z] == '/' || text[z] == '\\')) {
+                    z += 1;
+                }
+                // (closers in reverse order: id[(text)] closes with )])
+                var y: i64 = b;
+
+                while (y > a && (text[y - 1] == '/' || text[y - 1] == '\\' ||
+                    (open == '[' && text[y - 1] == ')') || (open == '(' && text[y - 1] == ']'))) {
+                    y -= 1;
+                }
+                if (y < b) { b = y; }
+                add(out, j, a, Group::Punct);
+                add(out, a, b, Group::String);
+                add(out, b, z, Group::Punct);
+                i = z;
+                continue;
+            }
+            i = j;
+            continue;
+        }
+        if (c == '{' || c == '}' || c == '[' || c == ']' || c == '(' || c == ')') {
+            add(out, i, i + 1, Group::Punct);
+        }
+        i += 1;
+    }
+    return 0;
+}
