@@ -6964,6 +6964,121 @@ impl App {
 
 // ---- mermaid diagrams, drawn in the text's place (mermaid.ae) ------------------------
 
+// moves the window on v's new drawing to keep what was mid-window on old
+// (a w by h window): the node nearest the middle stays at the same scaled
+// offset from it; without nodes, the same fraction across and down
+fn keep_middle(old: &Canvas, mut v: &Viewer, w: i64, h: i64) -> void {
+    let cx: i64 = v.px + w / 2;
+    let cy: i64 = v.py + h / 2;
+
+    if (old.w <= 0 || old.h <= 0) {
+        return;
+    }
+    var best: i64 = -1;
+    var dist: i64 = 0;
+
+    for (let k: i64 in 0..old.ids.len) {
+        // (a cell is about twice as tall as wide)
+        let dx: i64 = old.mx[k] - cx;
+        let dy: i64 = (old.my[k] - cy) * 2;
+        let d: i64 = dx * dx + dy * dy;
+
+        if (best < 0 || d < dist) {
+            best = k;
+            dist = d;
+        }
+    }
+    var nx: i64 = 0;
+    var ny: i64 = 0;
+
+    {
+        let nw: &v::&Canvas = &v.canvas;
+
+        nx = cx * nw.w / old.w;
+        ny = cy * nw.h / old.h;
+        if (best >= 0) {
+            for (let k: i64 in 0..nw.ids.len) {
+                if (!str::eq(nw.ids[k], old.ids[best])) { continue; }
+                nx = nw.mx[k] + (cx - old.mx[best]) * nw.w / old.w;
+                ny = nw.my[k] + (cy - old.my[best]) * nw.h / old.h;
+            }
+        }
+    }
+    v.px = nx - w / 2;
+    v.py = ny - h / 2;
+}
+
+impl App {
+    /// is a diagram drawn in place of the text?
+    export fn viewing(self: &App) -> bool {
+        return self.viewer.len > 0 && self.viewer[0].id == self.b.id;
+    }
+
+    /// mermaid source line i is in: a .mmd buffer's text, or the Markdown
+    /// ```mermaid block around it ("": none)
+    export fn diagram_at(mut self: &App, i: i64) -> string {
+        if (str::eq(self.b.ft.syntax, "mermaid")) {
+            return self.b.text.text();
+        }
+        if (!str::eq(self.b.ft.syntax, "markdown")) {
+            return "";
+        }
+        // scan fences from the top: is i in a mermaid block, and where does it start?
+        var open: i64 = -1;
+        var lang: string = "";
+        let n: i64 = self.b.text.count;
+        var k: i64 = 0;
+
+        while (k < n) {
+            let l: string = str::trim(self.b.text.get(k));
+
+            if (str::starts_with(l, "```")) {
+                if (open < 0) {
+                    open = k;
+                    lang = str::to_lower(str::trim(str::trim_prefix(l, "```")));
+                } else {
+                    if (i >= open && i <= k && str::starts_with(lang, "mermaid")) {
+                        var b: str::Builder;
+
+                        for (let j: i64 in (open + 1)..k) {
+                            b.add(self.b.text.get(j));
+                            b.add_byte(10);
+                        }
+                        return b.to_string();
+                    }
+                    open = -1;
+                }
+            }
+            if (open < 0 && k >= i) { break; }
+            k += 1;
+        }
+        return "";
+    }
+
+    // draws the diagram at line i in place of the text
+    fn open_viewer(mut self: &App, i: i64) -> void {
+        if (self.diagram_at(i).len == 0) {
+            self.fail_msg("no mermaid diagram here (a ```mermaid block, or a .mmd file)");
+            return;
+        }
+        self.viewer = [Viewer { line: i, id: self.b.id, centered: false }];
+        self.say(
+            "the diagram: hjkl or a drag pan, + - zoom, 0 back, q (or \(self.cfg.leader)m) the text"
+        );
+    }
+
+    // :mermaid: draws the diagram at the cursor, or restores the text
+    fn toggle_viewer(mut self: &App) -> void {
+        if (self.viewing()) {
+            let line: i64 = self.viewer[0].line;
+
+            self.viewer = [];
+            if (line < self.b.text.count) { self.go(line, 0, true); }
+            return;
+        }
+        self.open_viewer(self.b.cy);
+    }
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
