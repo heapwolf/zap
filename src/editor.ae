@@ -7079,6 +7079,130 @@ impl App {
         self.open_viewer(self.b.cy);
     }
 
+    // pans the window by (dx, dy), kept near the drawing
+    fn pan_by(mut self: &App, dx: i64, dy: i64) -> void {
+        var v: Viewer = self.viewer.pop();
+
+        v.px += dx;
+        v.py += dy;
+        let w: i64 = self.edit_w;
+        let h: i64 = self.edit_h - 1;
+
+        // (the drawing's edge no further in than the window's middle)
+        if (v.px > v.canvas.w - w / 2) { v.px = v.canvas.w - w / 2; }
+        if (v.px < -(w / 2)) { v.px = -(w / 2); }
+        if (v.py > v.canvas.h - h / 2) { v.py = v.canvas.h - h / 2; }
+        if (v.py < -(h / 2)) { v.py = -(h / 2); }
+        self.viewer.push(v);
+    }
+
+    // centers the window on the drawing (its top left if bigger)
+    fn center_diagram(mut self: &App) -> void {
+        var v: Viewer = self.viewer.pop();
+        let w: i64 = self.edit_w;
+        let h: i64 = self.edit_h - 1;
+
+        v.px = 0;
+        v.py = 0;
+        if (v.canvas.w < w) { v.px = -((w - v.canvas.w) / 2); }
+        if (v.canvas.h < h) { v.py = -((h - v.canvas.h) / 2); }
+        self.viewer.push(v);
+    }
+
+    // diagram window: redrawn if its source or zoom changed
+    fn prepare_diagram(mut self: &App) -> void {
+        // (source reread only when the text changed: a .mmd file's whole text, or
+        // a Markdown block found from the top)
+        var src: string = self.viewer[0].src;
+
+        if (self.viewer[0].src_gen != self.b.gen) {
+            src = self.diagram_at(self.viewer[0].line);
+            self.viewer[0].src_gen = self.b.gen;
+        }
+        let z: i64 = self.viewer[0].zoom;
+
+        if (!str::eq(src, self.viewer[0].src) || z != self.viewer[0].drawn) {
+            var v: Viewer = self.viewer.pop();
+            // (zoomed: what was mid-window stays there)
+            let zoomed: bool = v.centered && v.drawn != z;
+            var old: Canvas = Canvas {};
+
+            if (zoomed) { old = std::take(mut &v.canvas); }
+            v.canvas = mermaid::draw(src, z);
+            if (zoomed) { keep_middle(&old, mut &v, self.edit_w, self.edit_h - 1); }
+            v.src = src;
+            v.drawn = z;
+            self.viewer.push(v);
+            if (!self.viewer[0].centered) {
+                self.center_diagram();
+                self.viewer[0].centered = true;
+            } else {
+                self.pan_by(0, 0);
+            }
+        }
+        let w: i64 = self.edit_w;
+        let h: i64 = self.edit_h - 1;
+        var vis: DiagramVis = DiagramVis {};
+        let cv: &self::&Canvas = &self.viewer[0].canvas;
+
+        vis.bar = "\(cv.title)  zoom \(self.viewer[0].zoom)  \(cv.w)×\(cv.h)   hjkl / drag: pan   + -: zoom   0: back   q: the text";
+        if (src.len == 0) { vis.bar = "the diagram is gone (q: the text)"; }
+
+        for (let y: i64 in 0..h) {
+            let (texts, kinds) = cv.runs(self.viewer[0].py + y, self.viewer[0].px, w);
+
+            vis.texts.push(texts);
+            vis.kinds.push(kinds);
+        }
+        self.diagram_vis = vis;
+    }
+
+    // a diagram window key -> 0 needs more keys, 1 done, 2 not one
+    fn viewer_cmd(mut self: &App, toks: &string[]) -> i64 {
+        let n: i64 = toks.len;
+        let (count, i) = read_count(toks, 0);
+
+        if (i >= n) {
+            return 0;
+        }
+        var c1: i64 = count;
+
+        if (c1 < 1) { c1 = 1; }
+        let half: i64 = self.edit_h / 2;
+
+        match (toks[i]) {
+            "h" | "<Left>" => { self.pan_by(-4 * c1, 0); },
+            "l" | "<Right>" => { self.pan_by(4 * c1, 0); },
+            "k" | "<Up>" => { self.pan_by(0, -2 * c1); },
+            "j" | "<Down>" => { self.pan_by(0, 2 * c1); },
+            "H" | "0" | "^" => {
+                if (str::eq(toks[i], "0")) {
+                    self.viewer[0].zoom = 0;
+                    self.viewer[0].centered = false;
+                    self.viewer[0].drawn = -100;
+                } else {
+                    self.pan_by(-self.edit_w / 2, 0);
+                }
+            },
+            "L" | "$" => { self.pan_by(self.edit_w / 2, 0); },
+            "<C-d>" | "J" | "<PageDown>" => { self.pan_by(0, half); },
+            "<C-u>" | "K" | "<PageUp>" => { self.pan_by(0, -half); },
+            "gg" | "g" => { self.pan_by(-100000, -100000); },
+            "G" => { self.pan_by(0, 100000); },
+            "+" | "=" | "<C-=>" => {
+                if (self.viewer[0].zoom < mermaid::ZOOM_MAX) { self.viewer[0].zoom += 1; }
+            },
+            "-" | "_" => {
+                if (self.viewer[0].zoom > mermaid::ZOOM_MIN) { self.viewer[0].zoom -= 1; }
+            },
+            "q" | "<Esc>" => { self.toggle_viewer(); },
+            ":" => { self.start_cmd(":"); },
+            _ => { return 2; }
+        }
+        return 1;
+    }
+}
+
 /// the running job's next output, or its end (cancel-safe: a select that
 /// drops it loses nothing)
 export async fn job_read(mut j: &Job) -> JobRead {
