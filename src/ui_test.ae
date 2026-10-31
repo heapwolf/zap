@@ -1168,6 +1168,72 @@ fn left() -> term::Button { return term::Button::Left; }
     return 0;
 }
 
+#test fn draws_mermaid_in_place() -> i32 {
+    var a: App = setup("mermaid");
+
+    fs::write_file(
+        "\(a.cwd)/flow.md",
+        "# Flow\n\n```mermaid\ngraph TD\n  A[Start] --> B[Done]\n```\n\nafter\n"
+    );
+    var ui = tui::headless(70, 16, view::view);
+
+    a.edit("flow.md");
+    shot(mut &ui, mut &a);
+    // clicking in the block: the diagram replaces the text
+    a.mouse_press(a.gutter + 2, 4, 1000);
+    a.mouse_release();
+    let t: string = shot(mut &ui, mut &a);
+
+    if (!a.viewing() || !str::contains(t, "│ Start │") || !str::contains(t, "flowchart TD")) {
+        print(t);
+        return 1;
+    }
+    if (!str::contains(t, " VIEW ")) {
+        return 2;
+    }
+    // + zooms (wider boxes), l pans, 0 resets
+    type_keys(mut &ui, mut &a, "+");
+    let t2: string = shot(mut &ui, mut &a);
+
+    if (!str::contains(t2, "│  Start  │") || a.viewer[0].zoom != 1) {
+        print(t2);
+        return 3;
+    }
+    let px: i64 = a.viewer[0].px;
+
+    type_keys(mut &ui, mut &a, "l");
+    if (a.viewer[0].px != px + 4) {
+        return 4;
+    }
+    type_keys(mut &ui, mut &a, "0");
+    shot(mut &ui, mut &a);
+    if (a.viewer[0].zoom != 0) {
+        return 5;
+    }
+    // the key toggles back to the text, at the block
+    type_keys(mut &ui, mut &a, "<Space>m");
+    if (a.viewing() || a.b.cy != 4) {
+        return 6;
+    }
+    type_keys(mut &ui, mut &a, "<Space>m");
+    if (!a.viewing()) {
+        return 7;
+    }
+    type_keys(mut &ui, mut &a, "q");
+    if (a.viewing()) {
+        return 8;
+    }
+    // outside a block: nothing to draw
+    type_keys(mut &ui, mut &a, "G<Space>m");
+    if (a.viewing() || !str::contains(a.msg, "no mermaid")) {
+        return 9;
+    }
+    // a .mmd file: all of it
+    fs::write_file("\(a.cwd)/seq.mmd", "sequenceDiagram\n  A->>B: hi\n");
+    a.edit("seq.mmd");
+    type_keys(mut &ui, mut &a, ":mermaid<CR>");
+    let t3: string = shot(mut &ui, mut &a);
+
 #test fn wheel_speeds_up() -> i32 {
     var a: App = setup("accel");
 
