@@ -1234,6 +1234,75 @@ fn left() -> term::Button { return term::Button::Left; }
     type_keys(mut &ui, mut &a, ":mermaid<CR>");
     let t3: string = shot(mut &ui, mut &a);
 
+    if (!a.viewing() || !str::contains(t3, "hi") || !str::contains(t3, "▶")) {
+        print(t3);
+        return 10;
+    }
+    return 0;
+}
+
+#test fn wheels_sideways() -> i32 {
+    var a: App = setup("hwheel");
+
+    fs::write_file("\(a.cwd)/long.txt", "\(str::repeat("abcdefghij", 20))\nshort\n");
+    var ui = tui::headless(60, 10, view::view);
+
+    a.edit("long.txt");
+    shot(mut &ui, mut &a);
+    let x: i64 = a.edit_x + 5;
+
+    // the text: the view moves, the cursor stays (and the view stays put)
+    a.hwheel(x, 6);
+    shot(mut &ui, mut &a);
+    if (a.b.left != 6 || a.b.cx != 0) {
+        return 1;
+    }
+    a.hwheel(x, 6);
+    let t: string = shot(mut &ui, mut &a);
+
+    if (a.b.left != 12) {
+        return 2;
+    }
+    a.hwheel(x, -100);
+    shot(mut &ui, mut &a);
+    if (a.b.left != 0) {
+        return 3;
+    }
+    // moving the cursor: the view follows it again
+    type_keys(mut &ui, mut &a, "$");
+    if (a.b.left == 0) {
+        return 4;
+    }
+    // a sheet: one column per notch
+    fs::write_file("\(a.cwd)/w.csv", "a,b,c\n1,2,3\n");
+    a.edit("w.csv");
+    shot(mut &ui, mut &a);
+    a.hwheel(x, 6);
+    shot(mut &ui, mut &a);
+    if (a.b.sheet[0].left != 1 || a.b.sheet[0].c != 1) {
+        return 5;
+    }
+    // a diagram: it pans
+    fs::write_file(
+        "\(a.cwd)/d.mmd", "graph LR\n  A[one] --> B[two] --> C[three] --> D[four] --> E[five]\n"
+    );
+    a.edit("d.mmd");
+    type_keys(mut &ui, mut &a, ":mermaid<CR>");
+    shot(mut &ui, mut &a);
+    let px: i64 = a.viewer[0].px;
+
+    a.hwheel(x, 6);
+    if (a.viewer[0].px != px + 6) {
+        return 6;
+    }
+    // the tree: not moved
+    a.hwheel(1, 6);
+    if (a.viewer[0].px != px + 6) {
+        return 7;
+    }
+    return 0;
+}
+
 #test fn wheel_speeds_up() -> i32 {
     var a: App = setup("accel");
 
