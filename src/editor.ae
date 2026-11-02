@@ -7460,3 +7460,60 @@ Nothing is lost: every state the buffer was ever in is kept, as a tree.
   separated by a comma: `:1,3d`, `:.,+2y`, `:'<,'>>`, `:%j` (`s d y > < j` take one)
 
 ## Files
+
+| command          | what it does                                            |
+| ---------------- | ------------------------------------------------------- |
+| `:w [file]`      | write (`:w!` even if the file changed since read)       |
+| `:wa` `:wq` `:x` | write all; write and quit; write if changed and quit    |
+| `:q` `:q!` `:qa` | quit (`!`: discard changes)                             |
+| `:e file` `:e!`  | open a file; reread this one                            |
+
+A write goes to a file beside it first, then into the file
+itself: the file keeps its permissions, owner, links and inode, and a
+failed write leaves it unchanged (and says where the new text is).
+
+## Buffers
+
+- `:ls` list, `:b N` buffer N, `:bn :bp` or `Ctrl-n Ctrl-p` next, previous
+- `:bd` close, `:enew` new, `Ctrl-^` the previous one
+
+## Spreadsheets
+
+A `.csv` or `.tsv` file opens as a grid, like sc (`:set sheets
+false`: as text; `:sheet` toggles). The file stays CSV: `:w` writes
+it, `u` undoes an edit.
+
+- `h j k l`, arrows, `w b`, `0 $`, `gg G` (`5G` row 5), `Ctrl-d Ctrl-u
+  Ctrl-f Ctrl-b`; the grid spans at least to Z and row 256
+- `Enter` (or `e`, `a`, a double click, a click on the bar) edits the cell
+  in the bar; `=` a formula; `c` from empty; `x` clears it
+- `v` select cells, `V` rows, `Ctrl-v` columns (or click a row number or
+  column letter, or drag); the bar shows their sum, average and count;
+  `y` yanks them (p pastes elsewhere), `x` clears them, `d` deletes
+  selected rows or columns
+- `o O` a row below or above; `ir ic` a row or column before, `ar ac` after;
+  `dd` (`3dd`) deletes rows, `dc` the column
+- `y` the cell, `Y` the row (`3Y`); `p P` paste a cell into one, rows below or above
+- `> <` widen or narrow the column (`5>`), or drag its letter's edge;
+  `f` fit it to its contents, `F` every column
+- `/ ? n N` search cells; `:sheet header` toggles a header row (bold,
+  pinned to the top); `:sheet fit`
+
+A formula starts with `=`: numbers, `"text"`, cells (`B3`, `$B$3`), `+ - * / ^`,
+`&` (joins text), `= <> < > <= >=`, and SUM AVERAGE MIN MAX COUNT COUNTA ABS
+ROUND INT SQRT MOD POW IF AND OR NOT LEN UPPER LOWER CONCAT, whose arguments
+may be ranges (`SUM(B2:B9)`; sc's `@sum(...)` too). Rows count from 1 as
+shown.
+
+## Diagrams
+
+A mermaid diagram (a Markdown ```mermaid block, or a `.mmd` file) is drawn
+in place of its text: `Space m` (`:mermaid`) toggles drawing and text,
+and clicking a Markdown block draws it (`:set mermaid false`: not on
+click). Flowcharts, state diagrams and sequence diagrams are drawn;
+other kinds say so.
+
+- `h j k l` or a drag pans, the wheel up and down; `H L J K` by half a window
+- `+ -` zoom (room for boxes and gaps; below 0, labels are cut with an
+  ellipsis so big diagrams fit), `0` resets
+- `q` or `Esc` back to the text
