@@ -132,6 +132,51 @@ selection: `visual`, bar: the grid's background, letters and numbers:
 `sheet.head.current`, `sheet.cursor`, `sheet.selection`, `sheet.header` and
 `sheet.bar`.
 
+## Diagrams
+
+Mermaid diagrams (a Markdown ` ```mermaid ` block or a `.mmd` file) are
+drawn in place of the text with box-drawing characters. `<leader>m`
+(`:mermaid`) toggles drawing and text; clicking a Markdown block draws it
+(`(set mermaid false)`: not on click). `h j k l` (or drag, or wheel) pan,
+`+` `-` zoom (space for boxes and gaps; below 0, labels are truncated with
+an ellipsis, down to 3 cells, so big diagrams fit), `0` resets, `q` returns
+to text. Round nodes get rounded corners, decisions `◇` on the border,
+circles `●`, hexagons `⬡`, subroutines double sides. It redraws as the
+source changes, in the theme's syntax colors.
+
+```
+      ┌───────┐
+      │ Start │
+      └───────┘
+          │
+          ▼
+     ╭────◇───╮
+     │ Is it? │
+     ╰────◇───╯
+       │  │ ▲
+    ┌──┘  │ │
+    │     └─┤
+    │       ├─┐
+    │ Yes   │ No
+    ▼       ▼ │
+ ┌────┐   ┌─────┐
+ │ OK │   │ Fix │
+ └────┘   └─────┘
+```
+
+* **Flowcharts** (`graph` / `flowchart`, `TD` `TB` `BT` `LR` `RL`): node
+  shapes, links (`-->` `---` `-.->` `==>` `--x` `--o` `<-->` `~~~`), labels
+  (`-->|yes|`, `-- yes -->`), chains and `&`. Layered layout
+  (`src/mermaid.ae`): cycles broken, each node ranked by its longest path,
+  a waypoint in each rank a long link crosses, rank order by neighbors (to
+  reduce crossings), links spread along node sides, one gap row per bend.
+* **State diagrams**: like flowcharts; `[*]` is a start (●) or end (◉).
+* **Sequence diagrams**: participants and actors, messages (`->>` `-->>`
+  `->` `-->` `-x` `-)`, self-messages too), notes, blocks (`loop` `alt`
+  `else` `opt` `par` ... `end`), `autonumber`.
+* Not yet: subgraph frames (their nodes are drawn), class, ER, Gantt, pie
+  and other kinds (the viewer says so).
+
 ## Configuration
 
 `~/.config/zap/init.zap` (or `$XDG_CONFIG_HOME/zap/init.zap`), read after
