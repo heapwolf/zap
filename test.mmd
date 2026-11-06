@@ -1,0 +1,546 @@
+flowchart TD
+%% Zeno's decision graph: what happens to a user's message, from the server's
+%% routing to the run's end. Kept with the code: a change to the flow
+%% (serve.ae, chat.ae, agent.ae) changes this file too.
+%% The ((double)) nodes are model calls; their names are the `call` of the
+%% diag events `zeno serve --diag` records in the session's events.jsonl, so
+%% a transcript can be followed on this graph. Docs: CHAT.md (the states and
+%% intents), MODEL-TOOLS.md (the run), TRANSPORT.md (the VM's files).
+%% A graph, not a tree: it has cycles (the turn loop, a retry, a message
+%% routed again). The chat's states in it are a type (chat.ae Chat, X77:
+%% each state with what it holds; CHAT.md, "A state is a type").
+%% Three kinds of node:
+%%   plain        what the code does (2026-10-12). A (Gn) or (Xn) in a label
+%%                is a case the first pass of this graph found and the code
+%%                now handles: its number, kept until the next pass
+%%   class gap    Gn: a case nothing handles yet, or only in part, and how to
+%%                handle it (dashed, amber)
+%%   class fix    Xn: a case the code handles wrongly or silently (red)
+%% The numbers are stable: a TODO, a commit or a doc names them.
+%% The sections, in a message's order: 1 in (the HTTP side), 2 route, 3
+%% clarify, 4 Zeno's questions answered, 5 a busy session, 6 anger, 7 a
+%% query before its run, 8 a run's setup, 9 a turn (the model's reply), 10 a
+%% tool call, 11 a finish, 12 stops and restarts, 13 the run's end, 14 the
+%% session and what it runs on.
+    classDef gap fill:#fff7e6,stroke:#d48806,stroke-dasharray:5 3,color:#000
+    classDef fix fill:#fff1f0,stroke:#cf1322,color:#000
+
+    %% ------------------------------------------------------------------
+    subgraph s_in ["1. in: POST /session/:id/message (serve.ae message, router)"]
+        in_msg[/"the user's message"/] --> in_empty{"empty, or only spaces?"}
+        in_empty -- yes --> in_400["400; nothing logged"]
+        in_empty -- no --> in_dup{"its key seen before, or the same text again within 3 s? (G1)"}
+        in_dup -- yes --> in_dupsaid["not routed again: 202 duplicate, the first one's event"]
+        in_dup -- no --> in_log["user.message logged; the title its first line, secrets masked (G3); 202 at once"]
+        in_log --> in_inbox["the INBOX, kept in queue.json (X10): one router per session, a message at a time, in order"]
+        in_inbox --> in_undeny{"a denial taken back (I accidentally denied that)? (G43)"}
+        in_undeny -- "yes, a command's" --> in_undenied["the run may make the call again (told at its next turn); a run that ended goes on with the task"]
+        in_undeny -- no --> in_stop{"a stop word alone, while a run works?"}
+        in_stop -- no --> in_perm{"a permission question waiting? (G4)"}
+        in_perm -- "yes, and a short reply (4 words at most)" --> in_permres(("resolve: allow, deny, always, never, or unclear"))
+        in_perm -- "yes, a longer message: routed as one" --> in_back
+        in_permres -- "an answer" --> in_permdone["answered as the client's buttons would (the first answer wins: X48); no route"]
+        in_permres -- "unclear: routed as any message (a question an aside; an instruction told to the run, the call not run)" --> in_back
+        in_perm -- no --> in_back{"never mind, forget that, with messages queued? (G14)"}
+        in_back -- yes --> in_backdo["the newest queued message dropped, said"]
+    end
+        in_stop -- "yes: anger, no classifier (X1)" --> an_halt
+        in_back -- no --> rt_under
+
+    %% ------------------------------------------------------------------
+    subgraph s_rt ["2. route (serve.ae handle, chat.ae classify, step)"]
+        rt_under{"a follow-up queued under a question no longer pending? (X8)"}
+        rt_under -- "yes: classified again" --> rt_pend
+        rt_under -- no --> rt_pend{"no question pending, not busy, not routed before?"}
+        rt_pend -- yes --> rt_amb(("understand (X70): one call, each field checked against the message: readings, only when it refers to nothing said (none when it names or describes something: X71); parts, only a question with a change, keeping what it names (X66, X72); names; makes; change; refers, what it describes, with terms to search; rule"))
+        rt_pend -- no --> rt_route
+        rt_amb --> rt_route(("route: an intent among those the state allows (no anger in a fresh session: X76); 20 s, 60 s while a run works; a query the understanding says asks for a change is a command (X70)"))
+        rt_route --> rt_ok{"an answer in time, a word the state allows?"}
+        rt_ok -- "no: timeout, model error, a word not allowed" --> rt_default["the default: query (it never writes)"]
+        rt_ok -- yes --> rt_two
+        rt_default --> rt_two{"two requests or more in it, each in its words? (G5; not a goodbye, anger, banter; X66: only parts that keep what the message names, its paths, files, modules, quoted text; else one request)"}
+        rt_two -- yes --> rt_split["said: one at a time; the first routed now, the rest queued behind it, each classified at its turn"]
+        rt_two -- no --> rt_ambq{"ambiguous? (waited 21 s at most)"}
+        rt_ambq -- "a query: its readings go with it, the answer to take the likelier and say so (X2)" --> rt_ended
+        rt_ambq -- no --> rt_ended{"ended, and not a goodbye?"}
+        rt_ended -- yes --> rt_reopen["reopened: idle (the guest booted again at the next run)"]
+        rt_ended -- no --> rt_step
+        rt_reopen --> rt_step{"chat::step(state, intent, changes, pending): the action; the action enters its own state"}
+        rt_step -- "banter (small talk with a request in it: the request)" --> rt_banter(("banter: a sentence or two, no tools, no guest; 60 s"))
+        rt_step -- "followup, idle or ended: follow" --> rt_follow{"the last turn's route"}
+        rt_step -- "terminal" --> rt_term{"changes not applied?"}
+        rt_follow -- banter --> rt_banter
+        rt_banter --> rt_heard[("heard: the exchange kept for the next run, 6000 characters, secrets masked")]
+        rt_banter -- "no reply" --> rt_banterr["an error: the model did not answer; heard anyway"]
+        rt_term -- yes --> rt_confirm["confirm_end: apply, discard, diff, stay? (awaiting, pending end)"]
+        rt_term -- "no, or the goodbye question pending (the second goodbye)" --> rt_bye["end_chat: goodbye (the VM's changes said lost, with it); the guest ended (a boot under way: ended when it is up)"]
+    end
+        rt_ambq -- "a command or a follow-up (X2)" --> cl_ask
+        rt_step -- "query: answer" --> qy_subject
+        rt_step -- "command: work" --> su_wait
+        rt_step -- "followup, awaiting or reviewing: resolve" --> pa_kind
+        rt_step -- "query, followup, command while busy; banter" --> bz_kind
+        rt_step -- "anger: calm, halt_calm" --> an_halt
+        rt_follow -- command --> su_wait
+        rt_follow -- "query, or none" --> qy_subject
+    rt_split --> rt_route
+    rt_heard -.-> su_heard
+    rt_follow -. "no open task, the message names the last closed one (its files, it, that): reopened (G25)" .-> su_task
+
+    %% ------------------------------------------------------------------
+    subgraph s_cl ["3. clarify (serve.ae clarify, resolve_clarify)"]
+        cl_ask["clarify: the readings numbered (4 at most, a line each: X4); the message held; pending clarify; awaiting"] --> cl_res(("resolve: first, second, ..., all, none, new, or unclear (a number: no call)"))
+        cl_res -- "a reading" --> cl_with["the held message, with the reading; not checked again"]
+        cl_res -- "all (both): each reading, in turn, as one message (G6)" --> cl_with
+        cl_res -- "none: neither, I meant X" --> cl_corr["the held message, with the correction and the readings it rules out; not checked again"]
+        cl_res -- "new: a request of its own (G7)" --> cl_new["the held message dropped, said; the new one routed"]
+        cl_res -- "unclear, a timeout (X3)" --> cl_unclear{"asked again already?"}
+        cl_unclear -- no --> cl_again["asked again: the number, both, or what you meant"]
+        cl_unclear -- yes --> cl_first["the first reading, said as the assumption"]
+        cl_first --> cl_with
+    end
+    cl_with --> rt_route
+    cl_corr --> rt_route
+    cl_new --> rt_route
+
+    %% ------------------------------------------------------------------
+    subgraph s_pa ["4. Zeno's questions answered (serve.ae resolve)"]
+        pa_kind{"the question pending"}
+        pa_kind -- "apply, end, undo, conflict, unapply" --> pa_word{"the reply is an option's word?"}
+        pa_word -- yes --> pa_pick{"the option"}
+        pa_word -- no --> pa_res(("resolve: the options and unclear; a plain yes the first; 20 s, else unclear"))
+        pa_res --> pa_pick
+        pa_kind -- "ask: the model's own (X6)" --> pa_askres(("resolve: yes, no, answer, new"))
+        pa_askres -- "yes, an answer (or unclear)" --> pa_yes["the route it asked for, the task going on; the request: its question and the reply (X7)"]
+        pa_askres -- no --> pa_no["said: I'll leave it; idle, or reviewing while changes wait"]
+        pa_askres -- new --> pa_newreq["the question dropped; routed as a new message"]
+        pa_pick -- apply --> pa_local{"--local?"}
+        pa_local -- yes --> pa_kept["kept: the changes are in the project already"]
+        pa_local -- no --> pa_git{"git apply of the session's patch, on the host"}
+        pa_git -- applied --> pa_close["the task closed (record); idle; the patch kept as applied.patch (an undo)"]
+        pa_git -- "already there" --> pa_already["said: the project has them"]
+        pa_git -- "the project changed where the session did (G8)" --> pa_conf["the files named; pending conflict: merge, diff, later, discard?"]
+        pa_conf --> pa_merge{"merge: each file, git merge-file (the project's side, the base, the session's)"}
+        pa_merge -- "all merge" --> pa_close
+        pa_merge -- "some conflict" --> pa_confleft["the merged written; those that conflict named, left out; still pending conflict"]
+        pa_kept --> pa_close
+        pa_pick -- "discard; undo" --> pa_disc{"added files removed, the base checked out"}
+        pa_disc -- ok --> pa_close
+        pa_disc -- fails --> pa_discno["not discarded: why; the question stands"]
+        pa_pick -- diff --> pa_diff["the stat said, or the diff of a file the reply names (G9); the question stands"]
+        pa_pick -- later --> pa_later["idle, the changes kept; the next command on top of them"]
+        pa_pick -- "stay (end); keep (undo, unapply)" --> pa_stay["reviewing (the apply question again), else idle"]
+        pa_pick -- unclear --> pa_unclear["I did not get that: asked again; the second time, the options as words to type (G10)"]
+        pa_pick -- "undo (unapply)" --> pa_unapply{"the applied patch reversed on the project (G11)"}
+        pa_unapply -- ok --> pa_unapplied["undone: the project's files as before the apply"]
+        pa_unapply -- "files changed since" --> pa_unapplyno["not undone: those files named; nothing touched"]
+        pa_close -.- pa_post["POST /apply from a client closes the task too (X5)"]
+        pa_kind -.- pa_gone["each await checks the session is still there (X47)"]
+        pa_unapply -.- pa_unapplygap["G11: undo the apply is offered after anger at an applied command (G17); a plain undo that, later in the chat, is a follow-up, not this question"]:::gap
+    end
+        pa_kind -- "clarify" --> cl_res
+        pa_close -- "the end question, apply or discard" --> rt_bye
+    pa_yes --> qy_subject
+    pa_yes --> su_wait
+    pa_newreq --> rt_route
+
+    %% ------------------------------------------------------------------
+    subgraph s_bz ["5. a busy session (chat.ae step: answering, working)"]
+        bz_kind{"the intent, and the run's kind"}
+        bz_kind -- "query, followup while working" --> bz_short{"8 words at most, a command running? (G44)"}
+        bz_short -- yes --> bz_steer
+        bz_short -- "no, or not the task's" --> bz_aside(("aside: from the task and the run's last 20 steps, no tools; 60 s"))
+        bz_aside --> bz_heard[("heard")]
+        bz_aside -- "LATER: it needs the project (G12)" --> bz_defer["said: I'll look when the task is done; queued as a query"]
+        bz_kind -- "banter" --> bz_banter(("banter: at once"))
+        bz_banter --> bz_heard
+        bz_kind -- "command while a permission question waits" --> bz_tell["tell: the call not run, the run told the message instead"]
+        bz_kind -- "command while working" --> bz_steer(("steer: a correction or addition to the running task? (G13)"))
+        bz_steer -- yes --> bz_steered["to the run at its next turn as [THE USER, WHILE YOU WORKED], at the end of its newest message; the task's asks gain it (goals see it)"]
+        bz_steer -- no --> bz_queue
+        bz_kind -- "query, followup, command while answering" --> bz_queue["queued with its intent and the question pending (X8); queue.json; routed when the run ends, from the state it leaves"]
+        bz_kind -- "terminal: halt_end" --> bz_halt["halt_run: the queue dropped, the abort set; waits for the run, 30 s"]
+        bz_esc[/"abort (Esc): POST /abort; 409 when idle"/] --> bz_escdo["the queue and the INBOX dropped, said (X11); the run halted if one runs; it ends aborted, after() as usual"]
+        bz_halt -.- bz_abort["the abort is seen between stream pieces and while waiting for the first (X13, X26), in side calls (X16), in a permission wait, before a boot (X18)"]
+        bz_abort -.- bz_abortgap["X13: a tool call in the guest (a 60 s command) runs to its end before the abort is seen; the guest has no cancel"]:::fix
+    end
+        bz_halt -- "halted" --> rt_term
+        bz_halt -- "30 s passed: the run orphaned, its end makes no move (X12)" --> rt_term
+    bz_steered --> tl_top
+
+    %% ------------------------------------------------------------------
+    subgraph s_an ["6. anger (serve.ae calm, chat.ae introspect)"]
+        an_halt["the run halted first if one works (the queue dropped, its plan not continued); an anger event; angers counted"] --> an_stop{"a stop word alone, or nothing asked, or nothing said?"}
+        an_stop -- yes --> an_did["what the run did (its calls, by tool)"]
+        an_did --> an_chg{"a command: files changed? applied?"}
+        an_chg -- "changed" --> an_undo["ask: undo the changes? (pending undo, awaiting)"]
+        an_chg -- "applied already (G17)" --> an_unapply["ask: undo the apply? (pending unapply)"]
+        an_chg -- no --> an_idle["the pending question cleared (X14): idle, or reviewing while changes wait"]
+        an_stop -- no --> an_pair{"the exchange judged: the last one, a banter's too (X15); an earlier one when the reaction points back (G16)"}
+        an_pair --> an_intro(("introspect: what was asked, the reply's faults in its own words, what to do instead; 60 s"))
+        an_intro --> an_faults{"each fault in the reply's words?"}
+        an_faults -- no --> an_dropf["dropped (the model's invention)"]
+        an_faults -- yes --> an_said["said: what I got wrong"]
+        an_dropf --> an_said
+        an_intro -- "no answer" --> an_said
+        an_said --> an_files{"the rejected run a command that changed files, or applied them?"}
+        an_files -- changed --> an_undo
+        an_files -- applied --> an_unapply
+        an_files -- no --> an_again{"a redo of this request rejected already? (G15)"}
+        an_again -- "first rejection" --> an_redo["redo: the request again, with the rejected answer, its faults, what to do instead; a banter's as a banter"]
+        an_again -- second --> an_third["no third redo: offered the expert, another approach, or the user's words for what is right (pending ask)"]
+        an_halt -.- an_praise["the classifier told praise is not anger (hell yes) (G18)"]
+        an_praise -.- an_praisegap["G18: to measure in eval/intents: cases of praise in strong words"]:::gap
+    end
+    an_unapply --> pa_unapply
+    an_redo -- query --> qy_subject
+    an_redo -- command --> su_wait
+
+    %% ------------------------------------------------------------------
+    subgraph s_qy ["7. a query before its run (chat.ae classify_subject, agent.ae frame)"]
+        qy_subject(("subject: project, language, library, system, general, session; 20 s, else project")) --> qy_kind{"the subject"}
+        qy_kind -- "session: about Zeno or this chat (G19)" --> qy_self(("session: answered from its record (state, last turn, what the runs did, changes, applied, rules, tasks, heard); no guest, no run"))
+        qy_kind -- else --> qy_aela{"about Aela? (no model: it names Aela, aec, .ae, std/; or an Aela project naming no other language)"}
+        qy_aela --> qy_event["the route event: subject, tools (shown under the message)"]
+        qy_event --> qy_tools{"the tools"}
+        qy_tools -- "project: bash read-only, read; what only running answers runs in a copy (G20)" --> qy_frame
+        qy_tools -- "language, library: Aela's docs (host aec), else the machine's" --> qy_frame
+        qy_tools -- "system: bash read-only, look-ups; the answer says it is the VM's Debian, not the user's machine (G21)" --> qy_frame
+        qy_tools -- "general: finish only" --> qy_frame
+        qy_frame(("frame: given (the user's words), asked, the open matter's parts (none with one slot: X17); 180 s (X16)")) --> qy_stated{"given, asked, each part stated in the question or what came before?"}
+        qy_stated -- no --> qy_dropped["dropped (a guard event)"]
+        qy_stated -- yes --> qy_fan
+        qy_dropped --> qy_fan{"slots 2 or more (/props), 2 parts or more?"}
+        qy_fan -- no --> qy_run
+        qy_fan -- yes --> qy_look["each part's material, in turn: the docs (host aec, 60 s), the project (a file it names, a grep), or none"]
+        qy_look --> qy_part(("part N: one part and its material, all at once; 180 s"))
+        qy_part --> qy_found["[FOUND] in the run's first message; one not back in time: not answered"]
+        qy_found --> qy_run["query run: the subject's tools, read-only, no plan, no checkpoint, 12 turns; told there is no network (G22); 3 turns before the end told to answer from what it found; stopped, asked for its answer, not a handoff: an answer ends the turn, nothing left open (X58)"]
+        qy_run -.- qy_webgap["G22: a question that needs the web is answered from knowledge, said so; the expert is not offered for it yet"]:::gap
+    end
+    qy_run --> su_wait
+
+    %% ------------------------------------------------------------------
+    subgraph s_su ["8. a run's setup (serve.ae begin_run, run_message, run_turn; agent.ae run_turn)"]
+        su_wait{"the guest booting, or lent to a diff or an apply?"}
+        su_wait -- "yes: waited for, a boot's time at most, not past an abort (X18)" --> su_guest
+        su_wait -- no --> su_guest{"a guest?"}
+        su_guest -- no --> su_boot["booted: --local a process (5 s); a VM: the image, a port, QEMU (90 s, 600 s emulated), the project copied in (48 MB packed) or cloned, its manifest kept; changes.patch restored over it"]
+        su_guest -- yes --> su_host
+        su_boot -- fails --> su_bootno["an error: the guest: why, and what to do (bake, --local, the console, --transport git: G23, G24); finish_turn; the changes and the patch kept, not lost (X19)"]
+        su_boot -- ready --> su_host{"the project changed on the host since the VM got it? (G41: its manifest, VM copy only; every file compared, not some: X51; the manifest renewed after an apply or a merge, so applied files are not taken for the user's: X52)"}
+        su_host -- "files the session did not change" --> su_take["copied in; the base moved to have them (checkpoint::take_in); said; the run told to read again"]
+        su_host -- "files it changed too" --> su_both["said: the session's version stays; merge at apply"]
+        su_host -- no --> su_long
+        su_take --> su_long
+        su_both --> su_long{"the message longer than 24000 characters? (G2)"}
+        su_long -- yes --> su_longdo["kept whole in the guest (.zeno/in/); the run given its start, end, problem lines and the path"]
+        su_long -- no --> su_heard
+        su_longdo --> su_heard["heard put before the message ([SAID EARLIER IN THIS CHAT] ... [NOW]), then cleared"]
+        su_heard --> su_profile{"the model's profile and context (/v1/models, /props): read again while the server did not say (X20)"}
+        su_profile --> su_cp{"a command?"}
+        su_cp -- yes --> su_check["checkpoint: the start commit; none: a guard, and goals told the files are not known (X21)"]
+        su_cp -- no --> su_task
+        su_check --> su_task{"an open task, and a followup or a query?"}
+        su_task -- yes --> su_goes["the task goes on: the message one of its asks"]
+        su_task -- no --> su_new["a new task (its expert count and stops at 0); an open one closed, superseded (record, secrets masked)"]
+        su_goes --> su_rules
+        su_new --> su_rules(("rules: the standing rules the message states, those it drops, those it would break (not for a query off the project; only when the understanding says it states one, or there are rules to drop: X70)"))
+        su_rules --> su_rstated{"each rule in the message's own words?"}
+        su_rstated -- no --> su_rdrop["dropped: a guard event"]
+        su_rstated -- yes --> su_rkeep["kept with the session; a rule replaced is said (G26); one that is the request itself dropped (G45: by the understanding's rule; its standing words only without one)"]
+        su_rkeep --> su_rbreak{"a command that would break a kept rule? (G27)"}
+        su_rbreak -- "yes, a new task" --> su_rask["asked before any work: does the rule hold, or does this replace it? (ends asked)"]
+        su_rbreak -- no --> su_ctx
+        su_rdrop --> su_ctx["the history over 60000 characters: compacted to half; the project map; the primer, decided at each run (X23); ls and the README"]
+        su_ctx --> su_route{"the route"}
+        su_route -- query --> su_qturn["the outline when no map; the frame's [THE QUESTION, FRAMED], [FOUND]"]
+        su_route -- command --> su_point["the request's symbols, shape words (square: ■□▣...), names, quoted text and file names searched in the project; the places found given to the plan and the run (G46)"]
+        su_point --> su_refs(("ground: what the request describes, and the terms to find it with: the understanding's (X70), else a call of its own (G48)"))
+        su_refs -- "abstract, a new task" --> su_places["its terms searched: the places found, those more terms find first; a place that quotes the request (five of its words in a row) dropped (X73)"]
+        su_places --> su_pick(("pick: which places the phrase means, each shown with the lines around it (a table row, a test's expected output: X56); clear or not"))
+        su_pick -- "one, or clearly one thing" --> su_meant["the run told: [WHAT THE REQUEST MEANS] the place"]
+        su_pick -- "two or more things it could mean" --> su_which["the run told the places it may be, not the user asked; it asks with a finish only if the code does not settle it (X74)"]
+        su_refs -. "what the request makes (a config file: an article or new before it), or, in a request that makes something, found nowhere or none picked (X69)" .-> su_made["not asked: the run told it is not in the project yet"]
+        su_places -- "nothing found" --> su_where["the run told it was found nowhere (a request that makes something: nothing said): it looks, and says so if it is not there (X74)"]
+        su_refs -- "concrete, none, or the task going on" --> su_plan
+        su_which --> su_plan
+        su_where --> su_plan
+        su_meant --> su_plan{"the profile plans? (qwen3-coder)"}
+        su_plan -- yes --> su_analyze(("analyze: kind, files, modules, requirements, steps, checks, unclear, unknowns, needs; 2000 tokens; 180 s; given to the run as a guess made before reading the code, not a limit: an edit outside its files, a note once that it is fine (X61); what the request names kept, a requirement for each the plan leaves out and a named std module among its modules (X67)"))
+        su_analyze -- "no answer, or not JSON" --> su_checks
+        su_analyze --> su_ground["checks that cannot pass dropped; a kernel's repaired; made-up expectations dropped; the modules' docs from the host's aec (X24)"]
+        su_ground --> su_kind{"its kind a question, no file to write? (G28)"}
+        su_kind -- yes --> su_asq["answered read-only, as a query; said"]
+        su_kind -- no --> su_unk{"unknowns: what it has from memory"}
+        su_unk -- "docs words" --> su_lookup["looked up, 3 at most: [LOOKED UP BEFORE THE WORK]"]
+        su_unk --> su_first{"a need the VM cannot meet (G29: no network, a program it lacks)? (what only the user can tell, the plan's unclear, requirements none stated: [OPEN POINTS] to the run, not asked first: X75)"}
+        su_lookup --> su_first
+        su_first -- "yes, a new task (X22: not again when it goes on)" --> su_before["Before I start: the questions; the run ends asked; awaiting"]
+        su_first -- no --> su_checks
+        su_plan -- no --> su_checks(("checks: 4 commands at most that show the request done; the plan's instead when it has some"))
+        su_checks --> su_flaw{"one that cannot pass? (.git, .zeno, git; aec given two sources)"}
+        su_flaw -- yes --> su_flawdrop["dropped: a guard event"]
+        su_flaw -- no --> su_base["the baseline: each run once in a copy, before any change; one that cannot run as written (no main, command not found, a usage error) is not held to while it fails the same way (X53)"]
+        su_flawdrop --> su_base
+        su_base --> su_sweep{"the request deletes or rewrites much? (G30)"}
+        su_sweep -- "yes, a new task" --> su_sweepask["asked once before any work, the plan's files named"]
+        su_sweep -- no --> su_steps{"steps? (ZENO_STEPS, or the plan 6 files and 5 steps or more: G31)"}
+        su_steps -- yes --> su_dag["run_steps: strategy, steps (a DAG); each step a fresh context, 16 turns, a check, 2 tries; steps that never ran (a cycle) a plan error (X49)"]
+    end
+        su_steps -- "no; no steps parsed: the plan's checks kept (X49)" --> tl_top
+    su_qturn --> tl_top
+    su_asq --> tl_top
+    su_before --> en_finish
+    su_rask --> en_finish
+    su_sweepask --> en_finish
+    su_dag --> en_finish
+    su_bootno --> en_finish
+
+    %% ------------------------------------------------------------------
+    subgraph s_tl ["9. a turn: the model's reply (agent.ae work_loop, reply)"]
+        tl_top{"aborted?"} -- yes --> st_aborted["ended aborted"]
+        tl_top -- no --> tl_steers["what the user said to the task meanwhile, taken in (G13)"]
+        tl_steers --> tl_fit{"the prompt over the context, less 4000?"}
+        tl_fit -- yes --> tl_brief(("brief: each long reply passed summarized, once; the last finish kept whole; the last 6 messages never cut"))
+        tl_brief --> tl_turn
+        tl_fit -- no --> tl_turn(("turn N: the model's reply, streamed; 600 s for its first piece, 120 s between pieces, an abort ends it (X26)"))
+        tl_turn --> tl_err{"a model error? (X25)"}
+        tl_err -- "the server down or failing" --> tl_retry["tried again, 3 times, 2, 5, 15 s apart"]
+        tl_err -- "the context full" --> tl_squeeze["the newest results to their value, compacted, asked again once"]
+        tl_err -- "the grammar refused" --> tl_loose["asked once without it"]
+        tl_err -- "still failing" --> tl_fail["ended model; the task stays open (continue goes on)"]
+        tl_retry --> tl_turn
+        tl_squeeze --> tl_turn
+        tl_loose --> tl_turn
+        tl_err -- no --> tl_degen{"it went round in itself: cut in the stream? (G32)"}
+        tl_degen -- yes --> tl_degdo["sent back; the repeat penalty raised for the run"]
+        tl_degen -- no --> tl_bad{"a native call not one of the tools, or its arguments not JSON? (X29)"}
+        tl_bad -- yes --> tl_baddo["not run: an error naming the tools"]
+        tl_bad -- no --> tl_cut{"cut at its length (finish length), a tag open or no finish? (X27)"}
+        tl_cut -- "yes, 2 at most" --> tl_cutdo["sent back: a write in parts (write, then edit); a finish, go on, shorter"]
+        tl_cut -- no --> tl_open{"a tool's tag opened and never closed? (X28)"}
+        tl_open -- yes --> tl_opendo["a format error naming the tag"]
+        tl_open -- no --> tl_repair{"unconstrained, and the profile repairs, and no tool?"}
+        tl_repair -- yes --> tl_again["asked once more, under the grammar"]
+        tl_again --> tl_parse
+        tl_repair -- no --> tl_parse{"the reply: a complete tool tag, a finish, text, nothing (X62: a call wrapped in another, bash around a write: the inner one)"}
+        tl_parse -- nothing --> tl_empty["a format error: one tool block or finish"]
+        tl_degdo --> tl_refused{"3 refused in a row?"}
+        tl_baddo --> tl_refused
+        tl_opendo --> tl_refused
+        tl_empty --> tl_refused
+        tl_refused -- no --> tl_top
+        tl_cutdo --> tl_top
+    end
+        tl_parse -- "finish, or text" --> fi_fail
+        tl_parse -- "a tool" --> to_rep
+        tl_parse -- "#lt;expert#gt;" --> to_exp
+        tl_refused -- yes --> st_stop
+    tl_fail --> en_finish
+
+    %% ------------------------------------------------------------------
+    subgraph s_to ["10. a tool call (agent.ae work_loop, call_tool; tools.ae; guest.ae)"]
+        to_rep{"the same call, nothing changed since?"}
+        to_rep -.- to_samefail["different calls failing the same way: 3 in a row, told the calls are wrong (each tool a tag of its own); 6, stopped failing (X64)"]
+        to_rep -- "a read, under 6 times" --> to_ref["the reference: unchanged since turn N, that result is above"]
+        to_rep -- "again" --> to_notrun["not run: its old output; do the next step"]
+        to_rep -- no --> to_held{"a held query (its looks ran out)?"}
+        to_held -- yes --> to_heldno["refused: answer now; the second: stopped looks"]
+        to_held -- no --> to_q{"a query: a call of its subject?"}
+        to_q -- "write, edit, restore; not its subject" --> to_qno["refused, its tools named; 3 in a row: stopped refused"]
+        to_q -- "yes, or a command" --> to_srv{"a server or a watcher in the foreground? (G36)"}
+        to_srv -- yes --> to_srvno["not run: how to run it in the background with a timeout, and look at it"]
+        to_srv -- no --> to_perm{"permission: the last rule that matches; a read-only bash allowed (split at ; | && outside quotes, so grep 'a\|b' is one command: X54); a deny wins over docs, recall and a query's looks (X32); a call denied before refused unasked (X34); a # timeout: over 60 s asked (G34)"}
+        to_perm -- ask --> to_ask["permission.asked: the call (a write's or an edit's diff); waits 600 s"]
+        to_ask -- "allow, always" --> to_mark
+        to_ask -- "tell" --> to_told["not run: what the user said, to do"]
+        to_ask -- "deny, never" --> to_denied["denied: this exact call not again (other calls fine), not asked again unless the user takes the denial back (G43); 3 in a row: stopped refused"]
+        to_ask -- "600 s, no answer (X33)" --> to_away["the run ends asking: the call named, shall I run it? (a yes goes on)"]
+        to_perm -- allow --> to_mark["marked: a checkpoint before (git), else a snapshot for bash"]
+        to_mark --> to_run["call_tool, in the guest; a query's command that could change files: in a copy of the project (G20)"]
+        to_run -- "the guest fails" --> to_guest["an error: the guest; ended guest"]
+        to_run --> to_which{"the tool"}
+
+        to_which -- bash --> to_bash{"how it ended (60 s, or its # timeout: line, 600 s at most); X63: a command the shell cannot parse says its syntax error"}
+        to_bash -- "timed out: an error (X35)" --> to_hint
+        to_bash -- "closed its output, ran on: killed at the same deadline (X36)" --> to_hint
+        to_bash -- "files changed" --> to_shell["each checked, as a write is; counted for the same-error watch (X37)"]
+        to_bash -- "used wrongly (an unknown option, usage:)" --> to_help["its --help with the error, once a program a run"]
+        to_bash -- "over 80 lines" --> to_long["its value: first 30, last 30, the problem lines; the whole in .zeno/out"]
+        to_bash -- else --> to_hint["what the output shows the VM cannot do, said: no network (G37), no such program (G38), waiting for input (G35), out of time"]
+
+        to_which -- read --> to_read{"the file"}
+        to_read -- "not found" --> to_r404["an error, and the files with a name like it (G39)"]
+        to_read -- binary --> to_rbin["refused, said so"]
+        to_read -- "long lines, many characters (X38)" --> to_rcap["a line cut at 2000 characters; the read stops at 40000, the next lines said"]
+        to_read -- "over 60 KB, no range (G47)" --> to_rbig["its first 60 lines, and: search it (grep -n), then read around the lines found"]
+        to_rbig --> to_after
+        to_read -- "read before, unchanged" --> to_ref
+
+        to_which -- "write, edit" --> to_wr{"written?"}
+        to_wr -- "edit: not found, many matches, changes nothing" --> to_wrerr["an error, said which"]
+        to_wr -- yes --> to_fcheck{"the file's check (Aela: aec on the host, its imports copied)"}
+        to_fcheck -- passes --> to_good["kept as the file's good version; failing cleared: it passes now"]
+        to_fcheck -- "[CHECK FAILED]" --> to_auto["autofix's certain rewrites, on the lines the edit changed only (X50: a whole-file fix took a needed ; off a line 1500 lines away); hints; the codes explained"]
+        to_auto --> to_same{"the same error as the last check?"}
+        to_same -- "no, a later line" --> to_prog["progress: the next error at line Y"]
+        to_same -- "no, an earlier line" --> to_regr["your change broke an earlier line, with its diff"]
+        to_same -- "yes, twice" --> to_settle(("settle: where its form comes from: the docs, a probe compiled, or a question kept"))
+        to_same -- "yes, an edit that missed the line" --> to_missed["your change did not touch line N"]
+        to_wr -. "the user's file the plan does not change" .-> to_offplan["a note, once: put it back (restore)"]
+        to_wr -. "the profile retries" .-> to_retry["candidates sampled, each checked; one that passes kept"]
+
+        to_which -- "docs, recall, restore" --> to_misc["docs: host aec, 60 s (else the guest's; missing: said); recall: the closed tasks; restore: a file as it last passed, or as the task found it when it is that now (X59: the edit that passed is what the model undoes); nothing to restore said so; what it undid shown, and in the permission question"]
+
+        to_exp{"the expert: on, a key, under max_calls for the task (X31), the rules allow?"}
+        to_exp -- no --> to_expno["an error saying which"]
+        to_exp -- ask --> to_expask["the brief shown (40000 characters, secrets masked: G3), asked first"]
+        to_expask -- allowed --> to_expcall(("expert: the brief, to Claude; its advice the result; 600 s"))
+        to_expask -- denied --> to_expno
+
+        to_after["after the tool"]
+        to_good --> to_after
+        to_prog --> to_after
+        to_regr --> to_after
+        to_missed --> to_after
+        to_settle --> to_after
+        to_long --> to_after
+        to_shell --> to_after
+        to_hint --> to_after
+        to_help --> to_after
+        to_misc --> to_after
+        to_rcap --> to_after
+        to_expcall --> to_after
+        to_after --> to_stop{"a change, nothing failing, the checks pass quietly (each one run)?"}
+        to_stop -- yes --> to_now["the checks pass: finish now (2 at most)"]
+        to_stop -- no --> to_cyc
+        to_now --> to_cyc{"this call and result 3 times in the last 6?"}
+        to_cyc -- twice --> to_circ["you are going in circles"]
+        to_cyc -- no --> to_miss{"a query's look found none of its words?"}
+        to_circ --> to_miss
+        to_miss -- "2nd" --> to_answer["answer now; one more look at most"]
+        to_miss -- "3rd" --> to_hold["held: finish only"]
+        to_miss -- no --> to_turns{"turns left (32; a query 12)?"}
+        to_answer --> to_turns
+        to_hold --> to_turns
+        to_turns -- no --> st_turns["stopped turns"]
+        to_guest -.- to_hang["G33: a VM gone mid-run is replaced and the run goes on (section 14); one that hangs with QEMU up is not seen: no heartbeat, the channel waits"]:::gap
+    end
+        to_rep -- "4th time" --> st_restart
+        to_same -- "3 checks in a row" --> st_stuck
+        to_cyc -- yes --> st_restart
+        to_turns -- yes --> tl_top
+    to_ref --> tl_top
+    to_notrun --> tl_top
+    to_heldno --> tl_top
+    to_qno --> tl_top
+    to_srvno --> tl_top
+    to_told --> tl_top
+    to_denied --> tl_top
+    to_wrerr --> tl_top
+    to_expno --> tl_top
+    to_rbin --> tl_top
+    to_r404 --> tl_top
+    to_away --> en_finish
+    to_guest --> ss_vmgone
+
+    %% ------------------------------------------------------------------
+    subgraph s_fi ["11. a finish (agent.ae work_loop: the gates, in order)"]
+        fi_fail{"a file fails its check? (refused twice at most for each failing file: X41)"}
+        fi_fail -- "yes, refused" --> fi_failno["fix it before finishing"]
+        fi_fail -- no --> fi_kind{"answer_kind on the prose, not the code: asks (its last paragraph), admits (in its own voice), unsure, done; false while a file fails (X42)"}
+        fi_kind --> fi_comp{"its Aela blocks compile? (host aec; queries too)"}
+        fi_comp -- "no, under 2" --> fi_compno["[COMPILE] sent back with the errors"]
+        fi_comp -- "yes, or 2 sent back already" --> fi_claims{"a command, it claims done, there are checks?"}
+        fi_claims -- yes --> fi_verify{"the checks and the rules' pass? each in a copy (named, removed after a timeout too: X46)"}
+        fi_verify -- "no, under 2 bounces" --> fi_bounce["sent back: a regression (it passed before), not done yet, a rule broken"]
+        fi_verify -- "no, after the restart's 2" --> fi_unver["unverified: its note"]
+        fi_verify -- "a check the guest could not run, or the disk full: unverified, not passed (X43, G42)" --> fi_unver
+        fi_verify -- yes --> fi_proven{"a check that failed before passes now?"}
+        fi_claims -- no --> fi_proven
+        fi_unver --> fi_proven
+        fi_proven -- yes --> fi_rnote
+        fi_proven -- "no, a command saying done" --> fi_goals(("goals: what the user asked that is not done (their words, the diff, the finish)"))
+        fi_proven -- "no, else" --> fi_rnote
+        fi_goals --> fi_gstated{"each in the user's own words?"}
+        fi_gstated -- "missing, under 2" --> fi_gback["[GOALS] sent back with the user's messages"]
+        fi_gstated -- "none, or dropped, or 2 sent back (Not done: ...)" --> fi_rnote
+        fi_goals -- "no answer: a pass" --> fi_rnote
+        fi_rnote{"rules no check covers, in the change's scope, not shown yet?"}
+        fi_rnote -- yes --> fi_rshow["shown once: does your change keep them?"]
+        fi_rnote -- no --> fi_qa{"the profile's QA?"}
+        fi_qa -- yes --> fi_qacall(("qa: the work judged against the task; PASS or FAIL; 180 s"))
+        fi_qacall -- "FAIL, under 2" --> fi_qaback["[QA] sent back"]
+        fi_qacall -- "PASS, no answer" --> fi_take
+        fi_qa -- no --> fi_take["the answer, its notes after it (does not compile; Nothing was written, a task to change files that changed none: X65; Not done; Unverified); ended answered"]
+    end
+        fi_verify -- "no, after 2" --> st_restart
+    fi_failno --> tl_top
+    fi_compno --> tl_top
+    fi_bounce --> tl_top
+    fi_gback --> tl_top
+    fi_rshow --> tl_top
+    fi_qaback --> tl_top
+    fi_take --> en_finish
+
+    %% ------------------------------------------------------------------
+    subgraph s_st ["12. stops and restarts (agent.ae restart, stopped)"]
+        st_restart{"no restart yet in this run? (ZENO_RESTART)"}
+        st_restart -- yes --> st_consult["the expert asked first when auto, once, for each kind of restart (X30, X40)"]
+        st_consult --> st_clean["a clean restart: the run's messages dropped (earlier tasks kept); the request, what fails, the diff so far, the advice; 2 bounces more"]
+        st_restart -- no --> st_stop
+        st_stuck{"3 checks, the same error: a fresh start of its own yet? (X39: one a run, none with ZENO_RESTART=0 or in a step)"}
+        st_stuck -- no --> st_fresh["a fresh start: the file put back as it last passed, read again; the run's history dropped, earlier tasks kept; the notes of its language"]
+        st_stuck -- yes --> st_askstuck["ended stuck, asking: the file, the line, the error, settle's question or how should this be written"]
+        st_stop["stopped (repeat, cycle, refused, looks, turns)"] --> st_made{"a command's run with changes, no file failing, its checks passing? (X60)"}
+        st_made -- yes --> st_judge(("judged on the change: the goal check, the diff, no final message"))
+        st_judge -- "nothing missing" --> st_done["done, answered: the run stopped before saying so; the stat (session 22 handed over a failure with the right change made)"]
+        st_judge -- "something missing" --> st_hand
+        st_made -- no --> st_hand{"a handoff asked, finish only: a tool call, or under 80 characters?"}
+        st_hand -- yes --> st_own["the harness's own: why, the goal, the failing file checked again, the changes"]
+        st_hand -- no --> st_theirs["the model's: the goal, what it tried, what is missing; the changes"]
+        st_own --> st_twice{"the task stopped before? (G40)"}
+        st_theirs --> st_twice
+        st_twice -- no --> st_handed["a handoff event, the task left open: continue goes on, a new budget; ended, Stopped"]
+        st_twice -- yes --> st_askhow["the handoff, and asked how to go on (another approach, the expert, leave it); ended, asking"]
+    end
+        st_turns --> st_stop
+    st_clean --> tl_top
+    st_fresh --> tl_top
+    st_aborted --> en_finish
+    st_askstuck --> en_finish
+    st_handed --> en_finish
+    st_askhow --> en_finish
+
+    %% ------------------------------------------------------------------
+    subgraph s_en ["13. the run's end (serve.ae finish_turn; chat.ae after)"]
+        en_finish{"halted by the router, or orphaned by its halt (X12)?"}
+        en_finish -.- en_guards["guards: always in the events (the record); a client draws them only with diagnostics on (X68)"]
+        en_finish -- yes --> en_halted["idle; the router made the move (an orphan after a goodbye: its guest ended)"]
+        en_finish -- no --> en_chg["a command: changes since the base (git diff in the guest); not known when the guest is unreachable: the session's and the patch's word kept (X19); changes.patch written"]
+        en_chg --> en_asks{"the answer asks? (a question last, or in its last paragraph)"}
+        en_asks --> en_after{"after(route, asks, changes, the question it was asked under)"}
+        en_after -- "a command with changes" --> en_rev["reviewing: apply, discard, diff, later?"]
+        en_after -- "it asks; a query under end, undo, clarify" --> en_await["awaiting: the model's question, ask; an offer (shall I) makes a yes a command"]
+        en_after -- "a query under apply" --> en_rev
+        en_after -- else --> en_idle["idle"]
+        en_rev --> en_queue["the queue routed again, in order, from the state entered"]
+        en_await --> en_queue
+        en_idle --> en_queue
+        en_idle --> en_record(("record: what was decided, when the task closes (ZENO_CONTEXT records, scored); secrets masked"))
+    end
+
+    %% ------------------------------------------------------------------
+    subgraph s_ss ["14. the session and what it runs on (serve.ae load_sessions, vm.ae)"]
+        ss_restart["the server restarted: sessions loaded, each event as numbered when written, a lost line a lost event (X45); one cut short comes back idle, said; a kept patch means changes wait (X44); the queue routed again"]
+        ss_vmgone{"the guest failed during a VM's run? (G33)"}
+        ss_vmgone -- yes --> ss_newvm["a new VM, the patch put back, the run told and continued, once"]
+        ss_vmgone -- "the new VM fails too" --> ss_novm["an error: why, what to do; the changes kept on the host"]
+        ss_del["DELETE while busy: halted, 30 s, else 409"]
+        ss_two["two clients: one INBOX, events to both; the first permission answer wins, a second is 409 (X48)"]
+        ss_both["G41: a file changed on both sides is said, the session's kept; which wins is not asked, merge settles it at apply"]:::gap
+    end
+    ss_newvm --> tl_top
+    ss_novm --> en_finish
+

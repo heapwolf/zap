@@ -15,13 +15,7 @@ syntax, tree, config, buffer, and the whole editor, headless).
 
 ## The screen
 
-```
- foss                       1 # Hosted Aela
-   ae-v0                    2
-     .notes                 3 Status: a proposal, ...
-       HOSTED.md            ...
- NORMAL  HOSTED.md                   utf-8    markdown  6%  23:19
-```
+![screenshot](/docs/screenshot.jpg)
 
 * The tree (of the start directory) is on the left, in a `tui::Split`.
   Resize it by dragging its edge, or with `<C-w>>` / `<C-w><`. `<C-t>`
