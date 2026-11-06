@@ -7517,3 +7517,59 @@ other kinds say so.
 - `+ -` zoom (room for boxes and gaps; below 0, labels are cut with an
   ellipsis so big diagrams fit), `0` resets
 - `q` or `Esc` back to the text
+
+## The tree
+
+- `Ctrl-t` show or hide; `Tab Shift-Tab` (or `Ctrl-w h` `Ctrl-w l`) switch between it and the text
+- `j k` move, `Enter o` open, `h` close, `-` up a directory, `C` make root
+- `H` hidden files, `R` reread, `q` hide; drag its edge to resize
+
+## The palette
+
+`Ctrl-k` (or `<leader>p`, `:palette`): files, project search, symbols
+(`aec outline`), buffers, commands, themes. `Tab Shift-Tab` switch category,
+`Up Down` choose, `Enter` pick.
+
+## Options and themes
+
+- `:set` lists all; `:set number!` toggles; `:set nu?` shows one
+- the wheel scrolls faster the faster it turns, up to `:set scrollaccel=6`
+  times (1: never); sideways too (tilt, trackpad, Shift and the wheel)
+- git signs left of the line numbers, in a git repository: `▎` added or
+  changed since the last commit, `▁` lines removed (faces `git.add`
+  `git.change` `git.delete`); `:set nogitsigns` hides them
+- `:set notildes` (`(set tildes false)` in init.zap): no `~` on rows
+  past the buffer's end
+- `h l Left Right` speed up the longer they are held (up to three times
+  as far per repeat: macOS's key repeat is slow); `:set nokeyaccel` keeps
+  them to one
+- `:theme name` (Tab completes): paper ink dune mist moss noon coal volt chalk amber,
+  zenbones' (zenbones zenwritten neobones rosebones forestbones tokyobones
+  seoulbones, each -light and -dark; vimbones nordbones duckbones zenburned
+  kanagawabones), and Atelier's (atelier-cave dune estuary forest heath
+  lakeside plateau savanna seaside sulphurpool, each also -light)
+- `:config` opens the file, `:reload` rereads it, `:defaults` shows the built-in one
+
+## Configuration
+
+`~/.config/zap/init.zap`, or the nearest `./init.zap` once `:trust`
+trusts it: s-expressions, as `:defaults` shows.
+
+    (set number true)
+    (set theme "ink")
+    (map normal "<leader>w" "w")
+    (command "lint" :run ("mylint" "%") :errors true)
+    (on "save" "*.md" "lint")
+
+## Tools
+
+The aela add-in: `:check :build :run :test :fmt :def :refs :explain
+:docs`, `gd gr K`. `:cnext :cprev :clist` and `]d [d` step through
+errors; `:! cmd` runs a shell command; `:stop` stops the running one; `:addins`
+and `:commands` list what exists.
+
+`:cd dir` (or `:! cd dir`) changes zap's directory: the tree root, where
+commands run, what the palette lists (`:cd -` back, `:cd` home); `:pwd`
+shows it. On AeOS, where programs can't start others, `:!` runs zap's
+own `ls cat mkdir rm mv cp echo touch` (`@NAME/...` another program's space).
+""";
