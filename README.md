@@ -1,6 +1,6 @@
 # zap
 
-A terminal editor in Aela, built on `std/tui`: nvim-like modes and keys, a
+A terminal editor in [Aela][0], built on `std/tui`: nvim-like modes and keys, a
 command line, search, a resizable file tree, buffers, themes, and add-ins
 (s-expressions) that run the Aela compiler's tools.
 
@@ -314,3 +314,5 @@ another program's space).
 * **The loop is async** (`src/main.ae`): a `select` over terminal events,
   the running command's output (a pipe in the event loop, so the editor
   never waits on a tool) and background work.
+
+  [0]:https://stablestate.cc
