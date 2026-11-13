@@ -28,6 +28,8 @@ import {
 import cfgm from "config.ae";
 import { Look, Theme, look } from "themes/theme.ae";
 import { Tree, Entry, tree } from "tree.ae";
+import ignore from "ignore.ae";
+import { Ignore } from "ignore.ae";
 import bufm from "buffer.ae";
 import {
     Buf,
@@ -107,6 +109,29 @@ export struct Loc {
     export message: string;
 }
 
+// does k move in a picker's list (std/tui's is_nav: Up, Down, PageUp,
+// PageDown, Ctrl+p / n)?
+fn nav_key(k: &tui::Key) -> bool {
+    match (token(k)) {
+        "<Up>" | "<Down>" | "<PageUp>" | "<PageDown>" | "<C-p>" | "<C-n>" => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// whether location a comes after b (by file, line, column)
+fn loc_after(a: &Loc, b: &Loc) -> bool {
+    let c: i64 = str::cmp(a.file, b.file);
+
+    if (c != 0) {
+        return c > 0;
+    }
+    if (a.line != b.line) {
+        return a.line > b.line;
+    }
+    return a.col > b.col;
+}
+
 /// a background command: program, output so far
 export struct Job {
     export name: string;
@@ -166,7 +191,11 @@ export struct App {
     export queue: string[] = [];         // commands queued behind it
     export locs: Loc[] = [];
     export loc_at: i64 = -1;
+    export problems: Loc[] = [];         // every check's problems that stand, by file and line
+                                         //   (the palette's Problems)
     export picker: tui::PickerState;
+    export pick_sel: tui::ListState;     // its selection, as it keeps it (the view shows the
+                                         //   chosen problem whole)
     export picking: string = "";         // "": no picker; "palette"
     export pick_items: string[] = [];
     export pick_values: string[] = [];
@@ -193,6 +222,7 @@ export struct App {
     match_gen: i64 = -1;                // pick_gen when matched
     export grep_query: string = "";      // project search query ("": none)
     export grep_at: i64 = 0;            // next file it reads
+    grep_ignore: Ignore = Ignore {};    // the project's .gitignore (Grep skips what it ignores)
     export symbols: string[] = [];       // aec outline's declarations (shown, then where)
     export symbol_at: string[] = [];
     export symbols_asked: bool = false;
@@ -297,7 +327,9 @@ export let VERSION: string = "0.1.0";
 let MODE_NAMES: string[] = ["NORMAL", "INSERT", "COMMAND", "SEARCH", "VISUAL"];
 
 /// palette categories, in Tab order
-export let CATEGORIES: string[] = ["Files", "Grep", "Symbols", "Buffers", "Commands", "Themes"];
+export let CATEGORIES: string[] = [
+    "Files", "Grep", "Symbols", "Problems", "Buffers", "Commands", "Themes"
+];
 
 /// ex commands by long name (what Tab completes; ex() also takes short
 /// names); keep in sync with ex()'s match
@@ -305,7 +337,8 @@ export let EX_NAMES: string[] = [
     "write", "wall", "wq", "wqa", "xit", "quit", "qall", "edit", "enew", "buffers", "buffer",
     "bnext", "bprevious", "bdelete", "set", "nohlsearch", "substitute", "earlier", "later",
     "undolist", "theme", "themes", "sheet", "mermaid", "tree", "focus", "reload", "trust",
-    "defaults", "config", "cnext", "cprevious", "clist", "find", "palette", "grep", "commands",
+    "defaults", "config", "cnext", "cprevious", "clist", "fix", "find", "palette", "grep",
+    "commands",
     "cd", "pwd", "help", "messages", "addins", "stop"
 ];
 
@@ -342,7 +375,8 @@ export fn app(cfg: Config, cwd: string) -> App {
     let shown: bool = cfg.tree;
     var a: App = App {
         cfg: cfg, look: lk, cwd: cwd, tree: tree(cwd, hidden), split: tui::split("tree", tw),
-        cmd: tui::input("cmd"), picker: tui::picker("pick")
+        cmd: tui::input("cmd"), picker: tui::picker("pick"),
+        pick_sel: tui::list("pick")
     };
 
     a.matcher = matcher("", false, true, true);
@@ -360,7 +394,10 @@ export fn app(cfg: Config, cwd: string) -> App {
 impl App as Model {
     fn update(mut self: &App, a: &tui::Action) -> void {
         self.split.update(a);
+        let q0: string = self.picker.text();
+
         self.picker.update(a);
+        self.follow_pick(a, q0);
         if (self.picking.len > 0 && self.cat == 1 &&
             !str::eq(self.picker.text(), self.grep_query)) {
             self.start_grep();
@@ -537,6 +574,22 @@ export fn short_name(cwd: string, p: string) -> string {
             r => { return r; },
             e: path::BadPath => {}
         }
+    }
+    return p;
+}
+
+/// a location's file, as lists show it: short_name's, else under the home
+/// directory as ~/... (std's: ~/.local/share/aela/std/...)
+export fn loc_name(cwd: string, p: string) -> string {
+    let s: string = short_name(cwd, p);
+    let home: string = process::env("HOME");
+
+    if (!str::eq(s, p) || home.len == 0 || !path::is_within(home, p)) {
+        return s;
+    }
+    match (path::rel(home, p)) {
+        r => { return "~/\(r)"; },
+        e: path::BadPath => {}
     }
     return p;
 }
@@ -4610,13 +4663,14 @@ impl App {
                 var lines: string[] = [];
 
                 for (let i: i64, let l: &self::&Loc in &self.locs) {
-                    lines.push(" \(i + 1) \(short_name(self.cwd, l.file)):\(l.line):\(l.col): \(l.message)"
+                    lines.push(" \(i + 1) \(loc_name(self.cwd, l.file)):\(l.line):\(l.col): \(l.message)"
                     );
                 }
                 if (lines.len == 0) { lines.push("no locations"); }
                 self.panel = lines;
                 self.panel_title = "locations (:cnext, :cprev)";
             },
+            "fix" => { self.open_picker("problems"); },
             "find" | "fin" => { self.open_picker("files"); },
             "palette" | "pick" => { self.open_picker(arg); },
             "cd" | "chdir" => { self.change_dir(arg); },
@@ -4982,8 +5036,8 @@ impl App {
 
     // ---- pickers ------------------------------------------------------------------------
 
-    /// opens the palette on category kind (files, grep, symbols, buffers,
-    /// commands, themes; "": the last one)
+    /// opens the palette on category kind (files, grep, symbols, problems,
+    /// buffers, commands, themes; "": the last one)
     export fn open_picker(mut self: &App, kind: string) -> void {
         // (from insert mode: leave as Esc does; from a selection: end it)
         if (self.mode == Mode::Insert) {
@@ -5002,8 +5056,24 @@ impl App {
         self.walk_start();
         self.picking = "palette";
         self.picker.reset();
+        self.pick_sel = tui::list("pick");
         self.grep_query = "";
         self.load_category();
+    }
+
+    // follows the picker's selection as PickerState.update moves it (Up, Down,
+    // the wheel; a new query: the first match), q0 the query before a
+    fn follow_pick(mut self: &App, a: &tui::Action, q0: string) -> void {
+        if (!str::eq(a.id, "pick") || a.kind == tui::Kind::Click || a.kind == tui::Kind::Select) {
+            return;
+        }
+        if (a.kind == tui::Kind::Paste ||
+            (a.kind == tui::Kind::Key && !nav_key(&a.key) &&
+                !str::eq(q0, self.picker.text()))) {
+            self.pick_sel = tui::list("pick");
+            return;
+        }
+        if (a.kind != tui::Kind::Key || nav_key(&a.key)) { self.pick_sel.update(a); }
     }
 
     /// switches the palette to the next (dir 1) or previous (-1) category; the
@@ -5039,6 +5109,11 @@ impl App {
             }
             items = std::copy(self.symbols);
             values = std::copy(self.symbol_at);
+        } else if (str::eq(cat, "Problems")) {
+            for (let i: i64, let l: &self::&Loc in &self.problems) {
+                items.push("\(loc_name(self.cwd, l.file)):\(l.line):\(l.col): \(l.message)");
+                values.push("\(i)");
+            }
         } else if (str::eq(cat, "Buffers")) {
             for (let b: BufInfo in self.infos()) {
                 var mod: string = "";
@@ -5050,7 +5125,7 @@ impl App {
         } else if (str::eq(cat, "Commands")) {
             let names: string[] = [
                 "write", "quit", "buffers", "tree", "set number!", "nohlsearch", "reload", "config",
-                "defaults", "clist", "help", "addins", "trust", "stop"
+                "defaults", "clist", "fix", "help", "addins", "trust", "stop"
             ];
 
             for (let nm: string in &names) {
@@ -5084,6 +5159,7 @@ impl App {
     fn start_grep(mut self: &App) -> void {
         self.grep_query = self.picker.text();
         self.grep_at = 0;
+        self.grep_ignore = ignore::parse(fs::read_file(path::join(self.cwd, ".gitignore")) ?? "");
         self.pick_items = [];
         self.pick_values = [];
         self.pick_gen += 1;
@@ -5099,6 +5175,9 @@ impl App {
             let p: string = self.files[self.grep_at];
 
             self.grep_at += 1;
+            let name: string = short_name(self.cwd, p);
+
+            if (self.grep_ignore.ignored(name, false)) { continue; }
             var size: i64 = 0;
 
             match (fs::info(p)) {
@@ -5120,7 +5199,6 @@ impl App {
                 }
             }
             if (binary || m.find(&text, 0) == none) { continue; }
-            let name: string = short_name(self.cwd, p);
 
             for (let n: i64, let l: string in str::lines(text)) {
                 if (m.find(&l, 0) == none) { continue; }
@@ -5394,6 +5472,10 @@ impl App {
 
         if (str::eq(cat, "Files")) {
             self.edit(v);
+        } else if (str::eq(cat, "Problems")) {
+            // (the problems become the locations: ]d [d go on from this one)
+            self.locs = std::copy(self.problems);
+            self.jump_loc(i);
         } else if (str::eq(cat, "Grep") || str::eq(cat, "Symbols")) {
             // path:line
             let colon: i64 = str::rfind(v, ":") ?? -1;
@@ -5980,11 +6062,13 @@ impl App {
         return out;
     }
 
-    // sets a tool's locations as diagnostics of the buffers they name (the
-    // file it ran on is cleared if it has none now)
-    fn set_diags(mut self: &App, locs: &Loc[], ran_on: string) -> void {
+    /// sets a tool's locations as diagnostics of the buffers they name (the
+    /// file it ran on is cleared if it has none now), and as the problems of
+    /// the files it ran on or names
+    export fn set_diags(mut self: &App, locs: &Loc[], ran_on: string) -> void {
         self.locs = std::copy(*locs);
         self.loc_at = -1;
+        self.take_problems(locs, ran_on);
 
         for (let i: i64 in -1..self.others.len) {
             var p: string = self.b.path;
@@ -6002,6 +6086,40 @@ impl App {
             if (mine) {
                 if (i < 0) { self.b.diags = ds; } else { self.others[i].diags = ds; }
             }
+        }
+    }
+
+    // a tool's locations with a message (a problem; refs' have none) replace
+    // the problems of the file it ran on and of the files they name
+    fn take_problems(mut self: &App, locs: &Loc[], ran_on: string) -> void {
+        var out: Loc[] = [];
+
+        for (let p: &self::&Loc in &self.problems) {
+            var stale: bool = str::eq(p.file, ran_on);
+
+            for (let l: &locs::&Loc in locs) { if (str::eq(l.file, p.file)) { stale = true; } }
+            if (!stale) { out.push(std::copy(*p)); }
+        }
+
+        for (let l: &locs::&Loc in locs) {
+            if (l.message.len == 0) { continue; }
+            // (in order: by file, line, column)
+            var at: i64 = out.len;
+
+            out.push(std::copy(*l));
+
+            // (moved, not copied, into place)
+            while (at > 0 && loc_after(&out[at - 1], &out[at])) {
+                let t: Loc = std::take(mut &out[at]);
+
+                out[at] = std::take(mut &out[at - 1]);
+                out[at - 1] = t;
+                at -= 1;
+            }
+        }
+        self.problems = out;
+        if (self.picking.len > 0 && str::eq(CATEGORIES[self.cat], "Problems")) {
+            self.load_category();
         }
     }
 
@@ -7527,7 +7645,8 @@ other kinds say so.
 ## The palette
 
 `Ctrl-k` (or `<leader>p`, `:palette`): files, project search, symbols
-(`aec outline`), buffers, commands, themes. `Tab Shift-Tab` switch category,
+(`aec outline`), problems (`:fix`, `<leader>x`: every file's, from its last
+check), buffers, commands, themes. `Tab Shift-Tab` switch category,
 `Up Down` choose, `Enter` pick.
 
 ## Options and themes
@@ -7565,7 +7684,7 @@ trusts it: s-expressions, as `:defaults` shows.
 
 The aela add-in: `:check :build :run :test :fmt :def :refs :explain
 :docs`, `gd gr K`. `:cnext :cprev :clist` and `]d [d` step through
-errors; `:! cmd` runs a shell command; `:stop` stops the running one; `:addins`
+errors; `:fix` lists every file's; `:! cmd` runs a shell command; `:stop` stops the running one; `:addins`
 and `:commands` list what exists.
 
 `:cd dir` (or `:! cd dir`) changes zap's directory: the tree root, where

@@ -556,7 +556,7 @@ fn left() -> term::Button { return term::Button::Left; }
     // reopens on the last category; Shift+Tab goes back, wrapping to
     // Themes; Enter applies one
     type_keys(mut &ui, mut &a, "<C-k><S-Tab><S-Tab>");
-    if (a.cat != 5) {
+    if (a.cat != 6) {
         return 7;
     }
     type_keys(mut &ui, mut &a, "<BS><BS><BS><BS>ink<CR>");
@@ -579,6 +579,93 @@ fn left() -> term::Button { return term::Button::Left; }
     type_keys(mut &ui, mut &a, "<Esc><Space>p");
     if (a.picking.len == 0) {
         return 13;
+    }
+    return 0;
+}
+
+#test fn problems_of_every_file() -> i32 {
+    var a: App = setup("problems");
+    var ui = tui::headless(100, 20, view::view);
+    let m: string = "\(a.cwd)/main.ae";
+    let n: string = "\(a.cwd)/notes/HOSTED.md";
+
+    a.edit("main.ae");
+    // a check of main.ae: its problem, one in a file it names, and a
+    // reference (no message: not a problem)
+    a.set_diags(&[
+        editor::Loc { file: n, line: 3, col: 1, message: "error[E1]: n3" },
+        editor::Loc { file: m, line: 2, col: 5, message: "error[E2]: m2" },
+        editor::Loc { file: m, line: 1, col: 1, message: "" }
+    ], m);
+    type_keys(mut &ui, mut &a, "<Space>x");
+    if (!str::eq(a.picking, "palette") || !str::eq(editor::CATEGORIES[a.cat], "Problems")) {
+        return 1;
+    }
+    // by file, then line
+    if (a.pick_items.len != 2 || !str::eq(a.pick_items[0], "main.ae:2:5: error[E2]: m2") ||
+        !str::eq(a.pick_items[1], "notes/HOSTED.md:3:1: error[E1]: n3")) {
+        return 2;
+    }
+    // Enter jumps; ]d goes on to the next
+    type_keys(mut &ui, mut &a, "<CR>");
+    if (a.picking.len > 0 || !str::eq(a.b.path, m) || a.b.cy != 1 || a.b.cx != 4) {
+        return 3;
+    }
+    type_keys(mut &ui, mut &a, "]d");
+    if (!str::eq(a.b.path, n) || a.b.cy != 2) {
+        return 4;
+    }
+    // a check of HOSTED.md replaces its problems only; the list follows
+    // while the palette is open
+    a.ex("fix");
+    a.set_diags(&[editor::Loc { file: n, line: 8, col: 2, message: "warning: n8" }], n);
+    if (a.pick_items.len != 2 || !str::eq(a.pick_items[1], "notes/HOSTED.md:8:2: warning: n8")) {
+        return 5;
+    }
+    // a clean check of main.ae clears its own
+    a.set_diags(&[], m);
+    if (a.pick_items.len != 1 || a.problems.len != 1) {
+        return 6;
+    }
+    a.set_diags(&[], n);
+    let t: string = shot(mut &ui, mut &a);
+
+    if (!str::contains(t, "no problems")) {
+        return 7;
+    }
+    // one longer than a row: the chosen one shows whole, wrapped, below the
+    // list; a file under the home directory as ~/...
+    let home: string = process::env("HOME");
+    let far: string = "\(home)/.local/share/aela/std/http/server.ae";
+
+    a.set_diags(&[editor::Loc {
+        file: far, line: 160, col: 27,
+        message: "error[E0623]: std::workers runs 'worker_serve' on several workers at once: it cannot use a var global: 'BAD' END"
+    }], far);
+    if (a.pick_items.len != 1 ||
+        !str::starts_with(a.pick_items[0], "~/.local/share/aela/std/http/server.ae:160:27:")) {
+        return 8;
+    }
+    let t2: string = shot(mut &ui, mut &a);
+
+    if (!str::contains(t2, "'BAD' END")) {
+        return 9;
+    }
+    // Down: the next one whole
+    a.set_diags(&[editor::Loc {
+        file: m, line: 1, col: 1,
+        message: "error[E0301]: a second message, long enough that a row of the list cuts it SECOND"
+    }], m);
+    type_keys(mut &ui, mut &a, "<Down>");
+    let t3: string = shot(mut &ui, mut &a);
+
+    if (a.pick_sel.selected != 1 || !str::contains(t3, "it SECOND")) {
+        return 10;
+    }
+    // a new query: the first match again
+    type_keys(mut &ui, mut &a, "e");
+    if (a.pick_sel.selected != 0) {
+        return 11;
     }
     return 0;
 }
@@ -1402,6 +1489,32 @@ fn find_on(t: &string, s: string) -> (i64, i64) {
             print(t2);
             return 2;
         }
+    }
+    return 0;
+}
+
+#test fn grep_skips_gitignored() -> i32 {
+    var a: App = setup("grepignore");
+    var ui = tui::headless(70, 12, view::view);
+
+    state::ensure_dir("\(a.cwd)/out");
+    fs::write_file("\(a.cwd)/out/gen.txt", "needle\n");
+    fs::write_file("\(a.cwd)/x.log", "needle\n");
+    fs::write_file("\(a.cwd)/keep.txt", "needle\n");
+    fs::write_file("\(a.cwd)/.gitignore", "out/\n*.log\n");
+    type_keys(mut &ui, mut &a, "<leader>/needle");
+
+    while (a.has_work()) { a.background(); }
+    if (a.pick_items.len != 1 || !str::contains(a.pick_items[0], "keep.txt")) {
+        return 1;
+    }
+    // (no .gitignore: everything)
+    fs::write_file("\(a.cwd)/.gitignore", "");
+    type_keys(mut &ui, mut &a, "<BS>e");
+
+    while (a.has_work()) { a.background(); }
+    if (a.pick_items.len != 3) {
+        return 2;
     }
     return 0;
 }

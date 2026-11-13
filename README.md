@@ -51,8 +51,9 @@ select, `Enter` opens, `Esc` closes. It reopens on the last category.
 | category | lists                                                                                       | also     |
 | -------- | ------------------------------------------------------------------------------------------- | -------- |
 | Files    | project files (the start directory; skips hidden directories and node_modules)              | `<leader>f` |
-| Grep     | lines in those files matching the query (smartcase), in order; searches in the background as you type, 4 MB per step | `<leader>/` |
+| Grep     | lines in those files matching the query (smartcase), in order, skipping what the root `.gitignore` ignores; searches in the background as you type, 4 MB per step | `<leader>/` |
 | Symbols  | project declarations, from the add-in command `symbols` (aela add-in: `aec outline <cwd>`)  | `<leader>s` |
+| Problems | every check's problems that stand (each file's from its last check), by file and line; Enter jumps, then `]d` / `[d` go on | `:fix`, `<leader>x` |
 | Buffers  | open buffers                                                                                | `<leader>b` |
 | Commands | ex commands, and every add-in command with its `:doc`                                       |          |
 | Themes   | themes; Enter applies one                                                                   | `:themes` |
@@ -245,7 +246,8 @@ status line shows a spinner; `:stop` kills it). Arguments may contain `%`
 (the file), `%:h`, `%:r`, `%:t`, `<cword>`, `<cwd>`. With `:errors true`,
 `file:line:col: message` output lines become diagnostics: line numbers turn
 red, the status line counts them, `:cnext` / `:cprev` (`]d` / `[d`) step
-through them, `:clist` lists them. `:show` sets where output goes:
+through them, `:clist` lists them. A location with a message is a
+problem: the palette's Problems (`:fix`) keeps them for every file. `:show` sets where output goes:
 `"panel"` (last lines, below the status line), `"buffer"`, `"jump"` (to the
 first location printed) or `"quiet"`.
 
@@ -253,7 +255,7 @@ The built-in `aela` add-in uses `aec`:
 
 | command    | runs                                        | keys        |
 | ---------- | ------------------------------------------- | ----------- |
-| `:check`   | `aec % --check-only` (also after each save) | `<leader>c` |
+| `:check`   | `aec % --lib` (also after each save)        | `<leader>c` |
 | `:build`   | `aec % -o %:r`                              |             |
 | `:run`     | build, then run; output in a buffer         | `<leader>r` |
 | `:test`    | `aec test %`                                | `<leader>t` |

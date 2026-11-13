@@ -36,7 +36,7 @@
 ;; ---- an add-in: commands that run programs, with keys and hooks -------------
 
 (addin "aela-extra"
-  (command "verify" :run ("aec" "%" "--check-only" "--verify-report" "--message-format" "short")
+  (command "verify" :run ("aec" "%" "--lib" "--verify-report" "--message-format" "short")
     :save true :errors true :doc "what the verifier cannot prove")
   (command "allocs" :run ("aec" "%" "--allocs") :show "buffer" :errors true
     :doc "every heap allocation the program can make")

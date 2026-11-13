@@ -1140,7 +1140,6 @@ export fn view(s: &App) -> Node(App) {
         if (k == s.cat) { tabs.push(tui::span(label, std::copy(on))); } else {
             tabs.push(tui::span(label, std::copy(off)));
         }
-        if (k + 1 < editor::CATEGORIES.len) { tabs.push(tui::plain(" ")); }
     }
     var hint: string = "Tab: category  Up/Down: choose  Enter: open  Esc: close";
 
@@ -1150,7 +1149,21 @@ export fn view(s: &App) -> Node(App) {
         if (s.grep_query.len < 2) { hint = "type at least two characters to search the project"; }
     }
     if (s.cat == 2 && s.pick_items.len == 0) { hint = "aec outline is reading the project..."; }
+    if (str::eq(editor::CATEGORIES[s.cat], "Problems") && s.pick_items.len == 0) {
+        hint = "no problems (checks run on save: :check)";
+    }
     if (s.cat == 0 && s.walking) { hint = "listing the project... (\(s.files.len) files)"; }
+    var detail: string = "";
+    var detail_h: i64 = 0;
+
+    if (str::eq(editor::CATEGORIES[s.cat], "Problems") && s.shown.len > 0) {
+        var sel: i64 = s.pick_sel.selected;
+
+        if (sel >= s.shown.len) { sel = s.shown.len - 1; }
+        if (sel < 0) { sel = 0; }
+        detail = s.shown[sel];
+        detail_h = 4;
+    }
     var dim: tui::Style = std::copy(s.look.dialog);
 
     dim.dim = true;
@@ -1173,6 +1186,11 @@ export fn view(s: &App) -> Node(App) {
                 on_select: fn(a, i) -> { a.picked_shown(i); },
                 match_style: std::copy(s.look.search),
                 style: std::copy(s.look.dialog)
+            },
+            // (Problems: the chosen one whole, as a row cuts it)
+            tui::Text {
+                text: detail, style: std::copy(s.look.dialog), wrap: tui::Wrap::Word,
+                height: tui::fixed(detail_h)
             },
         ] }
     }] };

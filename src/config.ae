@@ -904,6 +904,7 @@ let DEFAULTS_REST: string = """;; ---- files -----------------------------------
 (map normal "<leader>m" "mermaid")
 (map normal "<C-s>" "w")
 (map insert "<C-s>" "w")
+(map normal "<leader>x" "fix")
 (map normal "]d" "cnext")
 (map normal "[d" "cprev")
 
@@ -911,7 +912,7 @@ let DEFAULTS_REST: string = """;; ---- files -----------------------------------
 
 (addin "aela"
   (filetype "aela" :ext (".ae") :syntax "aela" :comment "//" :icon "")
-  (command "check" :run ("aec" "%" "--check-only" "--message-format" "short")
+  (command "check" :run ("aec" "%" "--lib" "--message-format" "short")
     :save true :errors true :show "quiet" :doc "check the file: its errors in the gutter")
   (command "build" :run ("aec" "%" "-o" "%:r" "--message-format" "short")
     :save true :errors true :doc "build the file into %:r")
@@ -979,7 +980,11 @@ export let DEFAULTS: string = "\(DEFAULTS_TOP)\(base::BASE)\(DEFAULTS_REST)";
         return 10;
     }
     if (let cmd = c.command("check")) {
-        if (!cmd.errors || !cmd.save || cmd.run.len != 5) {
+        // --lib: a file without main (one the program imports) is checked too
+        var lib: bool = false;
+
+        for (let w: string in &cmd.run) { if (str::eq(w, "--lib")) { lib = true; } }
+        if (!cmd.errors || !cmd.save || cmd.run.len != 5 || !lib) {
             return 5;
         }
     } else {
